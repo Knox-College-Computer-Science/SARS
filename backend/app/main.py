@@ -3,6 +3,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import SESSION_SECRET
 from app.routes.auth import router as auth_router
+from app.routes.classroom import router as classroom_router
 
 app = FastAPI(title="CS322 Google Classroom Backend")
 
@@ -14,6 +15,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(classroom_router)
 
 
 @app.get("/")
