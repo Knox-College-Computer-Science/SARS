@@ -17,6 +17,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/classroom.courses.readonly",
+    "https://www.googleapis.com/auth/classroom.announcements.readonly",
 ]
 
 
@@ -67,3 +68,44 @@ def get_classroom_courses(access_token: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+def get_course_announcements(access_token: str, course_id: str) -> dict:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    response = requests.get(
+        f"https://classroom.googleapis.com/v1/courses/{course_id}/announcements",
+        headers=headers,
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def get_all_announcements_for_courses(access_token: str, courses: list) -> list:
+    all_announcements = []
+
+    for course in courses:
+        course_id = course.get("id")
+        course_name = course.get("name")
+
+        if not course_id:
+            continue
+
+        try:
+            response_data = get_course_announcements(access_token, course_id)
+            announcements = response_data.get("announcements", [])
+
+            for announcement in announcements:
+                all_announcements.append(
+                    {
+                        "courseId": course_id,
+                        "courseName": course_name,
+                        "id": announcement.get("id"),
+                        "text": announcement.get("text"),
+                        "creationTime": announcement.get("creationTime"),
+                        "updateTime": announcement.get("updateTime"),
+                    }
+                )
+        except Exception:
+            continue
+
+    return all_announcements
