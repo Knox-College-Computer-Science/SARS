@@ -83,8 +83,8 @@ def google_callback(
     cleaned_user = simplify_user(user_info)
 
     request.session["user"] = cleaned_user
-    request.session["tokens"] = token_data
     request.session["courses"] = cleaned_courses
+    request.session["access_token"] = access_token
 
     return JSONResponse(
         content={
