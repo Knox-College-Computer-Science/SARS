@@ -10,5 +10,7 @@ venv/
 backend/uploads/
 node_modules/
 Nexus/NEXUSRJ/backend/node_modules/
+Nexus/NEXUSRJ/node_modules/
+Nexus/NEXUSRJ/backend/venv/
 .next/
 .claude/
