@@ -86,10 +86,4 @@ def google_callback(
     request.session["courses"] = cleaned_courses
     request.session["access_token"] = access_token
 
-    return JSONResponse(
-        content={
-            "message": "Google login successful",
-            "user": cleaned_user,
-            "courses": cleaned_courses,
-        }
-    )
+    return RedirectResponse(url="http://localhost:3000/connect?connected=true")

@@ -1,15 +1,21 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 export default function Connect() {
+  const searchParams = useSearchParams();
   const [googleConnected, setGoogleConnected] = useState(false);
 
-  
+  useEffect(() => {
+    const connected = searchParams.get("connected");
+
+    if (connected === "true") {
+      setGoogleConnected(true);
+    }
+  }, [searchParams]);
 
   const handleGoogleConnect = () => {
-    // Later this will trigger real OAuth
-    alert("Google Classroom OAuth will be connected here. For now, marking as connected.");
-    setGoogleConnected(true);
+  window.location.href = "http://localhost:8000/auth/google/login";
   };
 
 
