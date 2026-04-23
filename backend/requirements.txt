@@ -7,3 +7,7 @@ google-auth
 requests
 itsdangerous
 starlette
+sqlalchemy>=2.0
+python-socketio>=5.11.0
+python-multipart>=0.0.9
+aiohttp>=3.9.0

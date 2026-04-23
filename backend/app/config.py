@@ -1,18 +1,22 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Try loading from backend/.env first, then fall back to project-root env / .env
+_backend_dir = Path(__file__).resolve().parent.parent   # /backend/
+_project_dir = _backend_dir.parent                      # /SARS/
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+for candidate in [
+    _backend_dir / ".env",
+    _backend_dir / "env",
+    _project_dir / ".env",
+    _project_dir / "env",
+]:
+    if candidate.exists():
+        load_dotenv(candidate)
+        break
+
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
-SESSION_SECRET = os.getenv("SESSION_SECRET")
-
-if not GOOGLE_CLIENT_ID:
-    raise ValueError("Missing GOOGLE_CLIENT_ID in .env")
-if not GOOGLE_CLIENT_SECRET:
-    raise ValueError("Missing GOOGLE_CLIENT_SECRET in .env")
-if not GOOGLE_REDIRECT_URI:
-    raise ValueError("Missing GOOGLE_REDIRECT_URI in .env")
-if not SESSION_SECRET:
-    raise ValueError("Missing SESSION_SECRET in .env")
+GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI")
+SESSION_SECRET       = os.getenv("SESSION_SECRET", "dev-secret-change-in-production")
