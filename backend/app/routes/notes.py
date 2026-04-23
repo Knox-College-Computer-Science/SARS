@@ -32,15 +32,31 @@ def _get_conn():
 @router.post("/upload")
 async def upload_note(file: UploadFile = File(...), subject: str = Form(...)):
     dest = UPLOAD_DIR / file.filename
+    file_bytes = await file.read()
+
     with dest.open("wb") as buf:
-        shutil.copyfileobj(file.file, buf)
+        buf.write(file_bytes)
 
     conn = _get_conn()
     conn.execute("INSERT INTO notes (filename, subject) VALUES (?, ?)", (file.filename, subject))
     conn.commit()
     conn.close()
 
-    return {"message": "Uploaded successfully", "filename": file.filename}
+    # Auto-index PDFs into the RAG vector store so they're immediately searchable
+    rag_indexed = False
+    if file.filename and file.filename.lower().endswith(".pdf"):
+        try:
+            from app.rag.rag_pipeline import index_pdf
+            index_pdf(file_bytes, file.filename)
+            rag_indexed = True
+        except Exception as e:
+            print(f"[RAG] Auto-index failed (non-fatal): {e}")
+
+    return {
+        "message": "Uploaded successfully",
+        "filename": file.filename,
+        "rag_indexed": rag_indexed,
+    }
 
 
 @router.get("/notes")

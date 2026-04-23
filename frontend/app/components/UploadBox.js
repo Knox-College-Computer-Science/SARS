@@ -10,6 +10,7 @@ export default function UploadBox() {
   const [file, setFile] = useState(null);
   const [subject, setSubject] = useState("");
   const [loading, setLoading] = useState(false);
+  const [lastResult, setLastResult] = useState(null);
 
   const handleUpload = async () => {
     if (!file || !subject) {
@@ -18,6 +19,7 @@ export default function UploadBox() {
     }
 
     setLoading(true);
+    setLastResult(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -30,7 +32,7 @@ export default function UploadBox() {
       });
 
       const data = await res.json();
-      alert(data.message);
+      setLastResult(data);
       setFile(null);
       setSubject("");
     } catch (err) {
@@ -81,8 +83,25 @@ export default function UploadBox() {
           disabled={loading}
           className="w-full bg-green-500 p-2 rounded hover:bg-green-600 text-white font-medium disabled:opacity-50 transition"
         >
-          {loading ? "Uploading..." : "Upload"}
+          {loading ? "Uploading…" : "Upload"}
         </button>
+
+        {/* Result feedback */}
+        {lastResult && (
+          <div className="mt-4 p-3 rounded bg-[#343541] text-sm">
+            <p className="text-green-400 font-medium">{lastResult.message}</p>
+            {lastResult.rag_indexed && (
+              <p className="text-purple-400 mt-1 text-xs">
+                🤖 Also indexed for AI Assistant — go to AI tab to ask questions!
+              </p>
+            )}
+            {lastResult.rag_indexed === false && (
+              <p className="text-yellow-500 mt-1 text-xs">
+                ⚠️ AI indexing skipped (Ollama may not be running).
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
