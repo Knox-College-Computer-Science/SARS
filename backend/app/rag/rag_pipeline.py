@@ -276,8 +276,8 @@ def delete_file_from_index(filename: str) -> int:
 # ANSWER GENERATION (streaming)
 # ============================================================
 
-SYSTEM_PROMPT = """You are Nexus AI, an academic assistant embedded inside a course hub.
-You answer questions STRICTLY using the provided course materials — never invent facts.
+SYSTEM_PROMPT = """You are SARS AI, an academic assistant embedded inside a course hub.
+You answer questions STRICTLY using the provided course materials — never create your own facts.
 
 Rules:
 1. Ground every claim in the retrieved context below.
