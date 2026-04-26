@@ -10,6 +10,7 @@ from app.routes.channels import router as channels_router
 from app.routes.messages import router as messages_router
 from app.routes.conversations import router as conversations_router
 from app.routes.notes import router as notes_router
+from app.routes.rag import router as rag_router
 
 from database import engine, Base, init_db
 from socket_manager import sio
@@ -41,6 +42,7 @@ app.include_router(channels_router, prefix="/channels", tags=["channels"])
 app.include_router(messages_router, tags=["messages"])
 app.include_router(conversations_router, prefix="/conversations", tags=["conversations"])
 app.include_router(notes_router)
+app.include_router(rag_router)
 
 
 @app.get("/")
