@@ -25,6 +25,7 @@ export default function Sidebar() {
         <SidebarItem href="/upload" label="Upload" icon="📤" open={open} />
         <SidebarItem href="/notes" label="Notes" icon="📂" open={open} />
         <SidebarItem href="/forum" label="Discussion" icon="💬" open={open} />
+        <SidebarItem href="/ai" label="AI Assistant" icon="🤖" open={open} />
         <SidebarItem href="/connect" label="Connect" icon="🔗" open={open} />
       </div>
     </div>
