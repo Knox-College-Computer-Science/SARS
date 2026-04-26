@@ -1,0 +1,61 @@
+name: initial_build.yml
+on:
+  push:
+    branches:
+      - Development
+      - Saharsh
+  pull_request:
+    branches:
+      - Development
+jobs:
+
+  backend:
+    name : Backend check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name : Python setup with ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Dependency Installment
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name : Start backend server
+        run: |
+          cd backend 
+          uvicorn app.main:socket_app --host 0.0.0.0 --port 8000 &
+          sleep 5
+          curl --fail http://localhost:8000/health
+
+  frontend:
+    name : Frontend Build
+    runs-on : ubuntu-latest
+
+    steps :
+      - uses: actions/checkout@v4
+
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version : "24"
+
+      - name: Dependencies Install
+        run: |
+          cd frontend 
+          npm ci 
+
+      - name: Run Frontend
+        run: |
+          cd frontend 
+          npm run build 

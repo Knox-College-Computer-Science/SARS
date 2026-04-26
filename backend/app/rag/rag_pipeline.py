@@ -287,6 +287,8 @@ Rules:
 5. Do not refer to the retrieval mechanics — just answer naturally."""
 
 
+# Testing
+
 def build_context_block(chunks: list[dict]) -> str:
     """Format retrieved chunks into a context string for the prompt."""
     lines = ["## Retrieved Course Material\n"]
