@@ -16,6 +16,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+        cache: "pip"
 
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +48,7 @@ jobs:
       - name: Node setup
         uses: actions/setup-node@v4
         with:
-          node-version : "20"
+          node-version : "24"
 
       - name: Dependencies Install
         run: |
