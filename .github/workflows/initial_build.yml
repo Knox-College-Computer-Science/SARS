@@ -4,6 +4,9 @@ on:
     branches:
       - Development
       - Saharsh
+      - Sandesh
+      - Ronak
+      - Aryab
   pull_request:
     branches:
       - Development
