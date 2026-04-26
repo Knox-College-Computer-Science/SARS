@@ -14,3 +14,5 @@ Nexus/NEXUSRJ/node_modules/
 Nexus/NEXUSRJ/backend/venv/
 .next/
 .claude/
+backend/chroma_db/
+backend/RAG_Uploads/
