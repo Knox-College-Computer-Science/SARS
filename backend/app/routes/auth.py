@@ -9,9 +9,6 @@ from security import create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-
-# ── Helpers ──────────────────────────────────────────────────────────
-
 def _get_initials(name: str) -> str:
     parts = name.strip().split()
     if not parts:
@@ -78,8 +75,6 @@ def _serialize_course(course: Course) -> dict:
     }
 
 
-# ── Google OAuth ──────────────────────────────────────────────────────
-
 @router.get("/google/login")
 def google_login(request: Request):
     from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
@@ -137,7 +132,6 @@ def google_callback(
     nexus_token = create_access_token(db_user.id)
 
     request.session["user"] = cleaned_user
-    request.session["courses"] = cleaned_courses
     request.session["access_token"] = access_token
     request.session["nexus_token"] = nexus_token
     request.session["nexus_user_id"] = db_user.id
@@ -145,21 +139,13 @@ def google_callback(
     return RedirectResponse(url="http://localhost:3000/connect?connected=true")
 
 
-# ── Classroom data (session-based) ────────────────────────────────────
-
 @router.get("/google/me")
 def get_google_me(request: Request):
-    user = request.session.get("user")
-    if not user:
-        raise HTTPException(status_code=401, detail="Not logged in")
-    return JSONResponse(content={
-        "user": user,
-        "nexus_token": request.session.get("nexus_token"),
-        "nexus_user_id": request.session.get("nexus_user_id"),
-    })
-
-
-# ── Chat / Nexus auth ─────────────────────────────────────────────────
+    return {
+        "user": request.session.get("user"),
+        "has_access_token": request.session.get("access_token") is not None,
+        "courses": request.session.get("courses"),
+    }
 
 class SchoolLaunchRequest(BaseModel):
     course_id: str
