@@ -84,9 +84,7 @@ export default function NotesPage() {
             <p className="text-sm text-gray-400">{note.subject}</p>
             <p className="text-xs text-gray-500">{note.upload_time}</p>
           </div>
-
-          <a
-            href={`http://localhost:8000/files/${note.filename}`}
+            <a href={`http://localhost:8000/files/${note.filename}`}
             target="_blank"
             className="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition"
           >
