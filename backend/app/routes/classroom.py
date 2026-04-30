@@ -6,6 +6,7 @@ from app.services.google_oauth import get_all_assignments_for_courses
 from app.services.google_oauth import get_classroom_courses
 from app.services.knox_calendar import get_current_knox_term
 from app.services.knox_calendar import get_current_knox_term_info
+import requests
 
 router = APIRouter(prefix="/classroom", tags=["Classroom"])
 
@@ -30,9 +31,27 @@ def get_courses_from_google(request: Request):
     access_token = request.session.get("access_token")
 
     if not access_token:
-        raise HTTPException(status_code=401, detail="No access token found in session")
+        raise HTTPException(
+            status_code=401,
+            detail="Google Classroom is not connected"
+        )
 
-    courses_data = get_classroom_courses(access_token)
+    try:
+        courses_data = get_classroom_courses(access_token)
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            request.session.pop("access_token", None)
+
+            raise HTTPException(
+                status_code=401,
+                detail="Google Classroom connection expired. Please reconnect."
+            )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch Google Classroom courses"
+        )
+
     raw_courses = courses_data.get("courses", [])
 
     courses = []

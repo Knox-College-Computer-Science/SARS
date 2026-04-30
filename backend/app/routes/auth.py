@@ -141,10 +141,15 @@ def google_callback(
 
 @router.get("/google/me")
 def get_google_me(request: Request):
+    user = request.session.get("user")
+    access_token = request.session.get("access_token")
+
+    if not user or not access_token:
+        raise HTTPException(status_code=401, detail="Not connected to Google Classroom")
+
     return {
-        "user": request.session.get("user"),
-        "has_access_token": request.session.get("access_token") is not None,
-        "courses": request.session.get("courses"),
+        "user": user,
+        "has_access_token": True,
     }
 
 class SchoolLaunchRequest(BaseModel):
