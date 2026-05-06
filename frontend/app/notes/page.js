@@ -86,8 +86,8 @@ export default function NotesPage() {
     }
   };
 
-  const connectGoogleClassroom = () => {
-    window.location.href = "http://localhost:8000/auth/google/login";
+  const goToConnectPage = () => {
+    window.location.href = "/connect";
   };
 
   const filteredNotes =
@@ -118,10 +118,10 @@ export default function NotesPage() {
           </p>
 
           <button
-            onClick={connectGoogleClassroom}
+            onClick={goToConnectPage}
             className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-sm font-medium"
           >
-            Connect Google Classroom
+            Go to Connect Page
           </button>
         </div>
       </div>
