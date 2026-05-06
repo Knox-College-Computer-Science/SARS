@@ -1,15 +1,58 @@
 "use client";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export default function Connect() {
-  const searchParams = useSearchParams();
-
-  const googleConnected = searchParams.get("connected") === "true";
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(true);
 
   const handleGoogleConnect = () => {
     window.location.href = "http://localhost:8000/auth/google/login";
   };
 
+  const handleGoogleDisconnect = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/auth/google/disconnect", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to disconnect Google Classroom");
+      }
+
+      setGoogleConnected(false);
+    } catch (err) {
+      console.error("Failed to disconnect:", err);
+      alert("Failed to disconnect Google Classroom.");
+    }
+  };
+  
+
+  useEffect(() => {
+    checkGoogleConnection();
+  }, []);
+
+  const checkGoogleConnection = async () => {
+    setCheckingConnection(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/auth/google/me", {
+        credentials: "include",
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setGoogleConnected(Boolean(data.user && data.has_access_token));
+      } else {
+        setGoogleConnected(false);
+      }
+    } catch (err) {
+      console.error("Failed to check Google connection:", err);
+      setGoogleConnected(false);
+    } finally {
+      setCheckingConnection(false);
+    }
+  };
 
   return (
     <div className="p-8 text-white max-w-2xl mx-auto">
@@ -39,34 +82,39 @@ export default function Connect() {
                 : "bg-gray-600 text-gray-300"
             }`}
           >
-            {googleConnected ? "✅ Connected" : "Not connected"}
+            {checkingConnection
+              ? "Checking..."
+              : googleConnected
+                ? "✅ Connected"
+                : "Not connected"}
           </span>
         </div>
 
-        {!googleConnected ? (
+        {!checkingConnection && !googleConnected ? (
           <button
             onClick={handleGoogleConnect}
             className="w-full bg-blue-500 hover:bg-blue-600 transition p-2 rounded-lg font-medium"
           >
             Connect with Google
           </button>
-        ) : (
+        ) : !checkingConnection && googleConnected ? (
           <div className="bg-[#343541] rounded-lg p-3 text-sm text-gray-300">
-             Google Classroom is connected. Your courses will sync automatically.
+            Google Classroom is connected. Your courses will sync automatically.
+
             <button
-              onClick={() => setGoogleConnected(false)}
+              onClick={handleGoogleDisconnect}
               className="ml-4 text-red-400 hover:text-red-300 text-xs underline"
             >
               Disconnect
             </button>
           </div>
-        )}
+        ) : null}
       </div>
 
 
       {/* Info note */}
       <p className="text-gray-500 text-xs mt-6 text-center">
-        ⚠️ Real OAuth integration will be added in the next phase. This UI is ready to plug in.
+        Google Classroom OAuth is active. Connected courses are synced from your current term.
       </p>
     </div>
   );
