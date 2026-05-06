@@ -156,6 +156,19 @@ class SchoolLaunchRequest(BaseModel):
     course_id: str
     token: str
 
+@router.post("/google/disconnect")
+def google_disconnect(request: Request):
+    request.session.pop("user", None)
+    request.session.pop("access_token", None)
+    request.session.pop("courses", None)
+    request.session.pop("nexus_token", None)
+    request.session.pop("nexus_user_id", None)
+    request.session.pop("oauth_state", None)
+
+    return {
+        "message": "Google Classroom disconnected successfully!"
+    }
+
 
 @router.post("/school-launch")
 def school_launch(body: SchoolLaunchRequest, request: Request, db: Session = Depends(get_db)):
