@@ -1,16 +1,32 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
 
 export default function Connect() {
-  const searchParams = useSearchParams();
-
   const [googleConnected, setGoogleConnected] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(true);
 
   const handleGoogleConnect = () => {
     window.location.href = "http://localhost:8000/auth/google/login";
   };
+
+  const handleGoogleDisconnect = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/auth/google/disconnect", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to disconnect Google Classroom");
+      }
+
+      setGoogleConnected(false);
+    } catch (err) {
+      console.error("Failed to disconnect:", err);
+      alert("Failed to disconnect Google Classroom.");
+    }
+  };
+  
 
   useEffect(() => {
     checkGoogleConnection();
@@ -83,7 +99,14 @@ export default function Connect() {
           </button>
         ) : !checkingConnection && googleConnected ? (
           <div className="bg-[#343541] rounded-lg p-3 text-sm text-gray-300">
-             Google Classroom is connected. Your courses will sync automatically.
+            Google Classroom is connected. Your courses will sync automatically.
+
+            <button
+              onClick={handleGoogleDisconnect}
+              className="ml-4 text-red-400 hover:text-red-300 text-xs underline"
+            >
+              Disconnect
+            </button>
           </div>
         ) : null}
       </div>
