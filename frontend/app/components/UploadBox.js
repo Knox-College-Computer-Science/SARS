@@ -21,6 +21,11 @@ export default function UploadBox() {
         credentials: "include",
       });
 
+      if (res.status === 401) {
+        setCourses([]);
+        return;
+      }
+
       if (!res.ok) {
         throw new Error("Failed to fetch courses");
       }
@@ -57,9 +62,16 @@ export default function UploadBox() {
       });
 
       const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.detail || "Upload Failed");
+        return;
+      }
+      
       setLastResult(data);
       setFile(null);
       setSubject("");
+
     } catch (err) {
       alert("Upload failed — is the backend running?");
     } finally {
