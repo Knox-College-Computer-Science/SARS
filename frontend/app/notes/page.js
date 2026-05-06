@@ -6,7 +6,7 @@ export default function NotesPage() {
   const [courses, setCourses] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState("All");
   const [isConnected, setIsConnected] = useState(false);
-  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(true);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
 
@@ -54,6 +54,7 @@ export default function NotesPage() {
 
       if (res.status === 401) {
         setIsConnected(false);
+        setCourses([]);
         return;
       }
 

@@ -39,9 +39,11 @@ def get_courses_from_google(request: Request):
     try:
         courses_data = get_classroom_courses(access_token)
     except requests.exceptions.HTTPError as e:
-        if e.response is not None and e.response.status_code == 401:
-            request.session.pop("access_token", None)
+        status_code = e.response.status_code if e.response is not None else None
 
+        request.session.pop("access_token", None)
+
+        if status_code == 401:
             raise HTTPException(
                 status_code=401,
                 detail="Google Classroom connection expired. Please reconnect."
@@ -84,13 +86,12 @@ def get_courses(request: Request):
 @router.get("/announcements")
 def get_announcements(request: Request):
     user = request.session.get("user")
-    access_token = request.session.get("access_token")
 
     if not user:
         raise HTTPException(status_code=401, detail="User is not logged in")
 
     courses = get_courses_from_google(request)
-
+    access_token = request.session.get("access_token")
     announcements = get_all_announcements_for_courses(access_token, courses)
 
     return JSONResponse(content={
@@ -101,13 +102,12 @@ def get_announcements(request: Request):
 @router.get("/assignments")
 def get_assignments(request: Request):
     user = request.session.get("user")
-    access_token = request.session.get("access_token")
 
     if not user:
         raise HTTPException(status_code=401, detail="User is not logged in")
 
     courses = get_courses_from_google(request)
-
+    access_token = request.session.get("access_token")
     assignments = get_all_assignments_for_courses(access_token, courses)
 
     return JSONResponse(content={
