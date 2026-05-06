@@ -1,38 +1,134 @@
 "use client";
 import { useEffect, useState } from "react";
 
-const SUBJECTS = [
-  { group: "CS", options: ["CS 142", "CS 202", "CS 220", "CS 208", "CS 221", "CS 322"] },
-  { group: "ECON", options: ["ECON 110", "ECON 120", "ECON 301", "ECON 302"] },
-];
-
 export default function NotesPage() {
   const [notes, setNotes] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState("All");
-  const [loading, setLoading] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(true);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [loadingCourses, setLoadingCourses] = useState(false);
 
   useEffect(() => {
-    fetchNotes();
+    checkGoogleConnection();
   }, []);
 
-  const fetchNotes = async () => {
-    setLoading(true);
+  const checkGoogleConnection = async () => {
+    setCheckingConnection(true);
+
     try {
-      const res = await fetch("http://localhost:8000/notes");
+      const res = await fetch("http://localhost:8000/auth/google/me", {
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        setIsConnected(false);
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.user && data.has_access_token) {
+        setIsConnected(true);
+        await fetchCourses();
+        await fetchNotes();
+      } else {
+        setIsConnected(false);
+      }
+    } catch (err) {
+      console.error("Failed to check Google connection:", err);
+      setIsConnected(false);
+    } finally {
+      setCheckingConnection(false);
+    }
+  };
+
+  const fetchCourses = async () => {
+    setLoadingCourses(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/classroom/courses", {
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        setIsConnected(false);
+        setCourses([]);
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch courses");
+      }
+
+      const data = await res.json();
+      setCourses(data.courses || []);
+    } catch (err) {
+      console.error("Failed to fetch courses:", err);
+      setCourses([]);
+    } finally {
+      setLoadingCourses(false);
+    }
+  };
+
+  const fetchNotes = async () => {
+    setLoadingNotes(true);
+    try {
+      const res = await fetch("http://localhost:8000/notes", {
+        credentials: "include",
+      });
       const data = await res.json();
       setNotes(data);
     } catch (err) {
-      console.error("Failed to fetch notes");
+      console.error("Failed to fetch notes:", err);
     } finally {
-      setLoading(false);
+      setLoadingNotes(false);
     }
+  };
+
+  const goToConnectPage = () => {
+    window.location.href = "/connect";
   };
 
   const filteredNotes =
     selectedSubject === "All"
       ? notes
       : notes.filter((n) => n.subject === selectedSubject);
+  if (checkingConnection) {
+    return (
+      <div className="p-6 text-white">
+        <p className="text-gray-400">Checking Google Classroom connection...</p>
+      </div>
+    );
+  }
 
+  if (!isConnected) {
+    return (
+      <div className="p-6 text-white">
+        <h1 className="text-2xl font-semibold mb-4">📂 Notes</h1>
+
+        <div className="bg-[#2f3342] border border-gray-600 rounded-lg p-6 max-w-xl">
+          <h2 className="text-xl font-semibold mb-2">
+            Connect Google Classroom
+          </h2>
+
+          <p className="text-gray-300 mb-4">
+            Connect to Google Classroom to upload and view notes according to
+            your current classes.
+          </p>
+
+          <button
+            onClick={goToConnectPage}
+            className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-sm font-medium"
+          >
+            Go to Connect Page
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <div className="p-6 text-white">
       <h1 className="text-2xl font-semibold mb-4">📂 Notes</h1>
@@ -50,28 +146,31 @@ export default function NotesPage() {
           All
         </button>
 
-        {SUBJECTS.map((group) =>
-          group.options.map((opt) => (
+        {loadingCourses && (
+          <span className="text-sm text-gray-400">Loading courses...</span>
+        )}
+
+        {!loadingCourses &&
+          courses.map((course) => (
             <button
-              key={opt}
-              onClick={() => setSelectedSubject(opt)}
+              key={course.id}
+              onClick={() => setSelectedSubject(course.name)}
               className={`px-3 py-1 rounded-full text-sm ${
-                selectedSubject === opt
+                selectedSubject === course.name
                   ? "bg-green-500"
                   : "bg-[#444654] hover:bg-gray-600"
               }`}
             >
-              {opt}
+              {course.name}
             </button>
-          ))
-        )}
+          ))}
       </div>
 
       {/* Notes list */}
-      {loading && <p className="text-gray-400">Loading...</p>}
+      {loadingNotes && <p className="text-gray-400">Loading notes...</p>}
 
-      {!loading && filteredNotes.length === 0 && (
-        <p className="text-gray-400">No notes found for this subject.</p>
+      {!loadingNotes && filteredNotes.length === 0 && (
+        <p className="text-gray-400">No notes found for this class.</p>
       )}
 
       {filteredNotes.map((note) => (

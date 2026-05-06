@@ -1,16 +1,45 @@
 "use client";
-import { useState } from "react";
-
-const SUBJECTS = [
-  { group: "CS", options: ["CS 142", "CS 202", "CS 220", "CS 208", "CS 221", "CS 322"] },
-  { group: "ECON", options: ["ECON 110", "ECON 120", "ECON 301", "ECON 302"] },
-];
+import { useEffect, useState } from "react";
 
 export default function UploadBox() {
   const [file, setFile] = useState(null);
   const [subject, setSubject] = useState("");
   const [loading, setLoading] = useState(false);
   const [lastResult, setLastResult] = useState(null);
+  const [courses, setCourses] = useState([]);
+  const [loadingCourses, setLoadingCourses] = useState(false);
+
+  useEffect(() => {
+    fetchCourses();
+  }, []);
+
+  const fetchCourses = async () => {
+    setLoadingCourses(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/classroom/courses", {
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        setCourses([]);
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch courses");
+      }
+
+      const data = await res.json();
+      setCourses(data.courses || []);
+    } catch (err) {
+      console.error("Failed to fetch courses:", err);
+      setCourses([]);
+    } finally {
+      setLoadingCourses(false);
+    }
+  };
+
 
   const handleUpload = async () => {
     if (!file || !subject) {
@@ -29,12 +58,20 @@ export default function UploadBox() {
       const res = await fetch("http://localhost:8000/upload", {
         method: "POST",
         body: formData,
+        credentials: "include",
       });
 
       const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.detail || "Upload Failed");
+        return;
+      }
+      
       setLastResult(data);
       setFile(null);
       setSubject("");
+
     } catch (err) {
       alert("Upload failed — is the backend running?");
     } finally {
@@ -59,23 +96,33 @@ export default function UploadBox() {
         />
 
         {/* Subject dropdown */}
-        <label className="block text-gray-400 text-sm mb-1">Select Subject</label>
+        <label className="block text-gray-400 text-sm mb-1">Select Class</label>
         <select
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           className="w-full p-2 mb-6 rounded bg-[#343541] text-white outline-none border border-gray-600"
         >
-          <option value="">-- Choose a subject --</option>
-          {SUBJECTS.map((group) => (
-            <optgroup key={group.group} label={group.group}>
-              {group.options.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </optgroup>
-          ))}
+          <option value="">-- Choose a current class --</option>
+
+          {loadingCourses && (
+            <option value="" disabled>
+              Loading courses...
+            </option>
+          )}
+
+          {!loadingCourses &&
+            courses.map((course) => (
+              <option key={course.id} value={course.name}>
+                {course.name}
+              </option>
+            ))}
         </select>
+
+        {!loadingCourses && courses.length === 0 && (
+          <p className="text-yellow-400 text-xs mb-4">
+            No current-term courses found. Try reconnecting Google Classroom.
+          </p>
+        )}
 
         {/* Upload button */}
         <button
