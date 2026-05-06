@@ -3,7 +3,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request
 from fastapi.responses import FileResponse
 
 router = APIRouter(tags=["Notes"])
@@ -30,7 +30,17 @@ def _get_conn():
 
 
 @router.post("/upload")
-async def upload_note(file: UploadFile = File(...), subject: str = Form(...)):
+async def upload_note(
+    request: Request,
+    file: UploadFile = File(...),
+    subject: str = Form(...),
+):
+    if not request.session.get("access_token"):
+        raise HTTPException(
+            status_code=401,
+            detail="Connect to Google Classroom before uploading notes."
+        )
+    
     dest = UPLOAD_DIR / file.filename
     file_bytes = await file.read()
 
