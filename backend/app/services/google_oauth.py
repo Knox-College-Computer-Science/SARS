@@ -19,6 +19,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.announcements.readonly",
     "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
 
@@ -170,3 +171,37 @@ def get_all_assignments_for_courses(access_token: str, courses: list) -> list:
             continue
 
     return all_assignments
+
+def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, subject: str) -> dict:
+    import io
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    from google.oauth2.credentials import Credentials
+
+    creds = Credentials(token=access_token)
+    service = build("drive", "v3", credentials=creds)
+
+    file_metadata = {
+        "name": filename,
+        "description": f"Class notes - {subject}",
+    }
+
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/pdf")
+
+    uploaded = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, name, webViewLink",
+    ).execute()
+
+    #  viewable by anyone with the link
+    service.permissions().create(
+        fileId=uploaded["id"],
+        body={"type": "anyone", "role": "reader"},
+    ).execute()
+
+    return {
+        "drive_file_id": uploaded["id"],
+        "drive_view_link": uploaded["webViewLink"],
+        "filename": uploaded["name"],
+    }

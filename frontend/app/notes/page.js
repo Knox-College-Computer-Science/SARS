@@ -10,6 +10,7 @@ export default function NotesPage() {
   const [notes, setNotes] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState("All");
   const [loading, setLoading] = useState(false);
+  const [previewNote, setPreviewNote] = useState(null);  // ← NEW
 
   useEffect(() => {
     fetchNotes();
@@ -42,23 +43,18 @@ export default function NotesPage() {
         <button
           onClick={() => setSelectedSubject("All")}
           className={`px-3 py-1 rounded-full text-sm ${
-            selectedSubject === "All"
-              ? "bg-green-500"
-              : "bg-[#444654] hover:bg-gray-600"
+            selectedSubject === "All" ? "bg-green-500" : "bg-[#444654] hover:bg-gray-600"
           }`}
         >
           All
         </button>
-
         {SUBJECTS.map((group) =>
           group.options.map((opt) => (
             <button
               key={opt}
               onClick={() => setSelectedSubject(opt)}
               className={`px-3 py-1 rounded-full text-sm ${
-                selectedSubject === opt
-                  ? "bg-green-500"
-                  : "bg-[#444654] hover:bg-gray-600"
+                selectedSubject === opt ? "bg-green-500" : "bg-[#444654] hover:bg-gray-600"
               }`}
             >
               {opt}
@@ -69,27 +65,61 @@ export default function NotesPage() {
 
       {/* Notes list */}
       {loading && <p className="text-gray-400">Loading...</p>}
-
       {!loading && filteredNotes.length === 0 && (
         <p className="text-gray-400">No notes found for this subject.</p>
       )}
 
       {filteredNotes.map((note) => (
-        <div
-          key={note.id}
-          className="bg-[#444654] p-4 mb-3 rounded-lg flex items-center justify-between"
-        >
-          <div>
-            <p className="font-medium">{note.filename}</p>
-            <p className="text-sm text-gray-400">{note.subject}</p>
-            <p className="text-xs text-gray-500">{note.upload_time}</p>
+        <div key={note.id} className="mb-3">
+          <div className="bg-[#444654] p-4 rounded-lg flex items-center justify-between">
+            <div>
+              <p className="font-medium">{note.filename}</p>
+              <p className="text-sm text-gray-400">{note.subject}</p>
+              <p className="text-xs text-gray-500">{note.upload_time}</p>
+              {note.uploaded_by && (
+                <p className="text-xs text-gray-500">by {note.uploaded_by}</p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Preview toggle button */}
+              <button
+                onClick={() => setPreviewNote(previewNote?.id === note.id ? null : note)}
+                className={`px-3 py-1 rounded text-sm transition ${
+                  previewNote?.id === note.id
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-blue-500 hover:bg-blue-600"
+                }`}
+              >
+                {previewNote?.id === note.id ? "Close" : "Preview"}
+              </button>
+
+              {/* Open in new tab */}
+              <a
+                href={note.drive_view_link || `http://localhost:8000/files/${note.filename}`}
+                target="_blank"
+                className="bg-[#555770] px-3 py-1 rounded text-sm hover:bg-gray-600 transition"
+              >
+                Open ↗
+              </a>
+            </div>
           </div>
-            <a href={`http://localhost:8000/files/${note.filename}`}
-            target="_blank"
-            className="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition"
-          >
-            View
-          </a>
+
+          {/* Inline PDF preview — Drive or local fallback */}
+          {previewNote?.id === note.id && (
+            <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
+              <iframe
+                src={
+                  note.drive_file_id
+                    ? `https://drive.google.com/file/d/${note.drive_file_id}/preview`
+                    : `http://localhost:8000/files/${note.filename}`
+                }
+                title={note.filename}
+                className="w-full"
+                style={{ height: "520px", border: "none" }}
+              />
+            </div>
+          )}
         </div>
       ))}
     </div>
