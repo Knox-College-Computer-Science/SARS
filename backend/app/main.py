@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+import socketio
 
 from app.config import SESSION_SECRET
 from app.routes.auth import router as auth_router
@@ -47,7 +48,7 @@ app.include_router(rag_router)
 
 @app.get("/")
 def root():
-    return {"message": "Backend is running"}
+    return {"message": "SARS API running"}
 
 
 @app.get("/health")
