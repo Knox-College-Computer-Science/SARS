@@ -43,6 +43,20 @@ export function schoolLaunch(courseId = "CHEM101") {
   });
 }
 
+export function syncClassroomCourses() {
+  return req("/auth/sync-courses", {
+    method: "POST",
+    body: JSON.stringify({}),
+    credentials: "include",
+  });
+}
+
+export function fetchClassroomMaterials() {
+  return req("/classroom/materials", {
+    credentials: "include",
+  });
+}
+
 // ── Workspace ─────────────────────────────────────────────────────────
 export async function fetchWorkspace(courseId, token) {
   return req(`/channels/courses/${courseId}/channels`, {

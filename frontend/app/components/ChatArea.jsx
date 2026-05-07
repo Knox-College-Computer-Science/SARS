@@ -55,7 +55,7 @@ function buildFeed(messages) {
     const label = formatDateLabel(msg.sentAt);
 
     if (label && label !== lastDateLabel) {
-      items.push({ type: "date", label, key: `date-${label}` });
+      items.push({ type: "date", label, key: `date-${label}-${i}` });
       lastDateLabel = label;
       lastSenderId = null;
     }

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export default function UploadBox() {
   const [file, setFile] = useState(null);
@@ -8,6 +8,8 @@ export default function UploadBox() {
   const [lastResult, setLastResult] = useState(null);
   const [courses, setCourses] = useState([]);
   const [loadingCourses, setLoadingCourses] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     fetchCourses();
@@ -70,6 +72,8 @@ export default function UploadBox() {
       
       setLastResult(data);
       setFile(null);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
       setSubject("");
 
     } catch (err) {
@@ -81,19 +85,71 @@ export default function UploadBox() {
 
   return (
     <div className="flex flex-col items-center justify-center h-full">
-      <div className="bg-[#444654] p-8 rounded-lg w-[420px] shadow-lg">
+      <div className="bg-[#444654] p-8 rounded-lg w-[800px] shadow-lg">
         <h2 className="text-xl mb-6 text-center text-white font-semibold">
           Upload Notes
         </h2>
 
-        {/* File input */}
-        <label className="block text-gray-400 text-sm mb-1">Select PDF</label>
+        <label className="block text-gray-400 text-sm mb-2">Select PDF</label>
+        <div
+          onClick={() => inputRef.current?.click()}
+          className="mb-5 w-full border-2 border-dashed border-gray-600 hover:border-green-400 rounded-lg p-4 cursor-pointer transition-colors flex items-center gap-3 bg-[#343541]"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <polyline points="14 2 14 8 20 8" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <div className="flex-1 min-w-0">
+            {file ? (
+              <p className="text-sm text-white truncate">{file.name}</p>
+            ) : (
+              <p className="text-sm text-gray-400">No file selected — click to browse</p>
+            )}
+          </div>
+          <span className="text-xs bg-[#444654] border border-gray-600 px-3 py-1 rounded-full text-gray-300 hover:border-green-400 transition-colors shrink-0">
+            Browse
+          </span>
+        </div>
         <input
+          ref={inputRef}
           type="file"
           accept=".pdf"
-          className="mb-5 w-full text-sm text-white"
-          onChange={(e) => setFile(e.target.files[0])}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files[0];
+            if (!f) return;
+            setFile(f);
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(URL.createObjectURL(f));
+          }}
         />
+
+        {previewUrl && (
+          <div className="mb-5 rounded-lg overflow-hidden border border-gray-600">
+            <div className="flex items-center justify-between px-3 py-2 bg-[#343541] border-b border-gray-600">
+              <span className="text-xs text-gray-400 truncate">{file?.name}</span>
+              <button
+                onClick={() => { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); setFile(null); }}
+                className="text-xs text-gray-500 hover:text-red-400 transition ml-2 shrink-0"
+              >
+                ✕ Remove
+              </button>
+            </div>
+            <div className="bg-yellow-900/40 border-b border-yellow-700 px-3 py-2 flex items-start gap-2">
+              <span className="text-yellow-400 text-xs mt-0.5">⚠️</span>
+              <p className="text-yellow-300 text-xs leading-snug">
+                This is a <strong>preview only</strong>. Any annotations made here won't be uploaded.
+                To upload an edited PDF, save it first then re-select it.
+              </p>
+            </div>
+            <iframe
+              src={previewUrl}
+              title="PDF Preview"
+              className="w-full"
+              style={{ height: "600px", border: "none" }}
+            />
+          </div>
+        )}
 
         {/* Subject dropdown */}
         <label className="block text-gray-400 text-sm mb-1">Select Class</label>
@@ -133,10 +189,19 @@ export default function UploadBox() {
           {loading ? "Uploading…" : "Upload"}
         </button>
 
-        {/* Result feedback */}
         {lastResult && (
           <div className="mt-4 p-3 rounded bg-[#343541] text-sm">
             <p className="text-green-400 font-medium">{lastResult.message}</p>
+            {lastResult.drive_view_link && (
+              <a
+                href={lastResult.drive_view_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 mt-1 text-xs block hover:underline"
+              >
+                📁 View on Google Drive ↗
+              </a>
+            )}
             {lastResult.rag_indexed && (
               <p className="text-purple-400 mt-1 text-xs">
                 🤖 Also indexed for AI Assistant — go to AI tab to ask questions!
