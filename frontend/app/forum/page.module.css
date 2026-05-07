@@ -1,0 +1,85 @@
+/* Fills the <main> area provided by the root layout */
+.app {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Loading / error splash */
+.splash {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #0d0e0f;
+}
+
+.splashLogo {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  color: #f5f6f8;
+}
+
+.splashSub {
+  color: rgba(240, 241, 244, 0.52);
+  font-size: 1rem;
+}
+
+.splashError {
+  text-align: center;
+  color: rgba(255, 180, 170, 0.9);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.retryBtn {
+  margin-top: 16px;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+  color: #f5f6f8;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.retryBtn:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+/* Welcome placeholder when no channel is selected */
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: rgba(240, 241, 244, 0.52);
+}
+
+.welcomeIcon {
+  font-size: 3rem;
+}
+
+.welcome h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: rgba(240, 241, 244, 0.72);
+}
+
+.welcome p {
+  font-size: 0.95rem;
+}

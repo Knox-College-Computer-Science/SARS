@@ -1,0 +1,216 @@
+.root {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  transition: background 100ms;
+}
+
+.root:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.root + .root:not(.compact) {
+  margin-top: 18px;
+}
+
+.compact {
+  margin-top: 2px !important;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 0.88rem;
+  font-weight: 800;
+  margin-top: 2px;
+}
+
+.avatarPlaceholder {
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.name {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #f6f7f9;
+  letter-spacing: -0.01em;
+}
+
+.ownName {
+  color: #8eb6ff;
+}
+
+.time {
+  font-size: 0.78rem;
+  color: rgba(240, 241, 244, 0.4);
+}
+
+.edited {
+  font-size: 0.75rem;
+  color: rgba(240, 241, 244, 0.3);
+  font-style: italic;
+}
+
+.text {
+  font-size: 0.97rem;
+  color: rgba(243, 244, 247, 0.9);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.editBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editInput {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(126, 176, 255, 0.5);
+  background: rgba(20, 21, 24, 0.9);
+  color: #f5f6f8;
+  font-size: 0.97rem;
+  line-height: 1.5;
+  box-shadow: 0 0 0 3px rgba(120, 170, 255, 0.1);
+  outline: none;
+}
+
+.editHint {
+  font-size: 0.75rem;
+  color: rgba(240, 241, 244, 0.4);
+}
+
+.editHint kbd {
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 0.72rem;
+}
+
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(240, 241, 244, 0.8);
+  font-size: 0.84rem;
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms;
+}
+
+.pill:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.pillMine {
+  background: rgba(76, 135, 232, 0.2);
+  border-color: rgba(76, 135, 232, 0.5);
+  color: #8cbcff;
+}
+
+.actions {
+  position: absolute;
+  top: -14px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #2a2b2f;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 3px 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+.actionBtn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 100ms;
+}
+
+.actionBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.deleteBtn:hover {
+  background: rgba(255, 80, 70, 0.18);
+}
+
+.emojiTriggerWrap {
+  position: relative;
+}
+
+.emojiPicker {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  background: #2a2b2f;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 6px 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+}
+
+.emojiBtn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background 100ms, transform 100ms;
+}
+
+.emojiBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(1.2);
+}

@@ -5,8 +5,20 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import SESSION_SECRET
 from app.routes.auth import router as auth_router
 from app.routes.classroom import router as classroom_router
+from app.routes.channels import router as channels_router
+from app.routes.messages import router as messages_router
+from app.routes.conversations import router as conversations_router
+from app.routes.notes import router as notes_router
+from app.routes.rag import router as rag_router
 
-app = FastAPI(title="CS322 Google Classroom Backend")
+from database import engine, Base, init_db
+from socket_manager import sio
+
+# Create all DB tables and seed demo data on startup
+Base.metadata.create_all(bind=engine)
+init_db()
+
+app = FastAPI(title="SARS API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,6 +37,11 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(classroom_router)
+app.include_router(channels_router, prefix="/channels", tags=["channels"])
+app.include_router(messages_router, tags=["messages"])
+app.include_router(conversations_router, prefix="/conversations", tags=["conversations"])
+app.include_router(notes_router)
+app.include_router(rag_router)
 
 
 @app.get("/")
@@ -35,3 +52,8 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# Wrap FastAPI with socket.io — run with:
+# uvicorn app.main:socket_app --reload --port 8000
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
