@@ -15,10 +15,13 @@ Requirements:
       ollama pull nomic-embed-text
 """
 
+from __future__ import annotations
+
 import json
 import re
 import hashlib
-from typing import Iterator
+from pathlib import Path
+from typing import Iterator, Optional
 
 import chromadb
 import PyPDF2
