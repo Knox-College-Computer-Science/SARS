@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 
 from app.services.google_oauth import get_all_announcements_for_courses
 from app.services.google_oauth import get_all_assignments_for_courses
+from app.services.google_oauth import get_all_materials_for_courses
 from app.services.google_oauth import get_classroom_courses
 from app.services.knox_calendar import get_current_knox_term
 from app.services.knox_calendar import get_current_knox_term_info
@@ -114,6 +115,23 @@ def get_assignments(request: Request):
         "user": user,
         "assignments": assignments
     })
+
+@router.get("/materials")
+def get_materials(request: Request):
+    user = request.session.get("user")
+
+    if not user:
+        raise HTTPException(status_code=401, detail="User is not logged in")
+
+    courses = get_courses_from_google(request)
+    access_token = request.session.get("access_token")
+    materials = get_all_materials_for_courses(access_token, courses)
+
+    return JSONResponse(content={
+        "user": user,
+        "materials": materials,
+    })
+
 
 @router.get("/term-info")
 def get_term_info():

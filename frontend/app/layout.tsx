@@ -1,7 +1,7 @@
 import Sidebar from "./components/Sidebar";
 import "./globals.css";
 
-export default function RootLayout({ children }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className="flex h-screen bg-[#343541] text-white">

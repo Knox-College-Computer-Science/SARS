@@ -6,6 +6,7 @@ import ChatArea from "../components/ChatArea";
 import DMArea from "../components/DMArea";
 import {
   schoolLaunch,
+  syncClassroomCourses,
   fetchWorkspace,
   fetchConversations,
   getOrCreateConversation,
@@ -19,6 +20,7 @@ export default function ForumPage() {
   const [currentUser,   setCurrentUser]   = useState(null);
   const [token,         setToken]         = useState(null);
   const [course,        setCourse]        = useState(null);
+  const [courses,       setCourses]       = useState([]);
   const [channels,      setChannels]      = useState([]);
   const [conversations, setConversations] = useState([]);
   const [activeView,    setActiveView]    = useState(null);
@@ -29,21 +31,41 @@ export default function ForumPage() {
   useEffect(() => {
     async function init() {
       try {
-        const auth = await schoolLaunch(COURSE_ID);
-        const { token: t, user, course: c } = auth;
+        let t, user, allCourses;
+
+        let googleConnected = false;
+        try {
+          const meRes = await fetch("http://localhost:8000/auth/google/me", { credentials: "include" });
+          googleConnected = meRes.ok;
+        } catch {}
+
+        if (googleConnected) {
+          const syncData = await syncClassroomCourses();
+          t = syncData.token;
+          user = syncData.user;
+          allCourses = syncData.courses ?? [];
+        } else {
+          const auth = await schoolLaunch(COURSE_ID);
+          t = auth.token;
+          user = auth.user;
+          allCourses = auth.course ? [auth.course] : [];
+        }
 
         setCurrentUser(user);
         setToken(t);
+        setCourses(allCourses);
+
+        const initialCourseId = allCourses[0]?.school_course_id ?? COURSE_ID;
 
         const [wsData, convData] = await Promise.all([
-          fetchWorkspace(COURSE_ID, t),
+          fetchWorkspace(initialCourseId, t),
           fetchConversations(t),
         ]);
 
         const chs   = wsData.channels       ?? [];
         const convs = convData.conversations ?? [];
 
-        setCourse({ ...c, ...wsData.course });
+        setCourse({ ...(allCourses[0] ?? {}), ...wsData.course });
         setChannels(chs);
         setConversations(convs);
 
@@ -112,6 +134,23 @@ export default function ForumPage() {
     setChannels(prev => [...prev, channel]);
   }, []);
 
+  const handleSelectCourse = useCallback(async (selectedCourse) => {
+    if (!token || !selectedCourse) return;
+    try {
+      const wsData = await fetchWorkspace(selectedCourse.school_course_id, token);
+      const chs = wsData.channels ?? [];
+      setCourse({ ...selectedCourse, ...wsData.course });
+      setChannels(chs);
+      if (chs.length > 0) {
+        setActiveView({ type: "channel", channelId: chs[0].id, channelName: chs[0].name });
+      } else {
+        setActiveView(null);
+      }
+    } catch (err) {
+      console.error("Course switch failed:", err);
+    }
+  }, [token]);
+
   if (loading) {
     return (
       <div className={styles.splash}>
@@ -126,7 +165,7 @@ export default function ForumPage() {
       <div className={styles.splash}>
         <div className={styles.splashLogo}>Discussion</div>
         <div className={styles.splashError}>
-          Could not connect to backend.
+          {error || "Could not connect to backend."}
           <br />
           <small>Make sure the API is running on port 8000.</small>
           <br />
@@ -142,6 +181,7 @@ export default function ForumPage() {
     <div className={styles.app}>
       <ChatSidebar
         course={course}
+        courses={courses}
         channels={channels}
         conversations={conversations}
         activeView={activeView}
@@ -149,9 +189,10 @@ export default function ForumPage() {
         onSelectDM={handleSelectDM}
         onStartDM={handleStartDM}
         onChannelCreated={handleChannelCreated}
+        onSelectCourse={handleSelectCourse}
         currentUser={currentUser}
         token={token}
-        courseId={COURSE_ID}
+        courseId={course?.school_course_id ?? COURSE_ID}
         onlineUsers={onlineUsers}
       />
 
