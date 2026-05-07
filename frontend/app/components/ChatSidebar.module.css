@@ -23,6 +23,29 @@
   line-height: 1.2;
 }
 
+.courseSelect {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #f5f6f8;
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 6px 10px;
+  cursor: pointer;
+  outline: none;
+  letter-spacing: -0.02em;
+}
+
+.courseSelect:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.courseSelect option {
+  background: #2a2b2f;
+  color: #f5f6f8;
+}
+
 .courseMeta {
   margin-top: 3px;
   font-size: 0.78rem;
