@@ -19,6 +19,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.announcements.readonly",
     "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+    "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
 
@@ -170,3 +172,103 @@ def get_all_assignments_for_courses(access_token: str, courses: list) -> list:
             continue
 
     return all_assignments
+
+
+def get_course_materials(access_token: str, course_id: str) -> dict:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    response = requests.get(
+        f"https://classroom.googleapis.com/v1/courses/{course_id}/courseWorkMaterials",
+        headers=headers,
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def get_all_materials_for_courses(access_token: str, courses: list) -> list:
+    all_courses_materials = []
+
+    for course in courses:
+        course_id = course.get("id")
+        course_name = course.get("name")
+
+        if not course_id:
+            continue
+
+        pdfs = []
+        slides = []
+        links = []
+
+        try:
+            response_data = get_course_materials(access_token, course_id)
+            materials_list = response_data.get("courseWorkMaterial", [])
+
+            for material_item in materials_list:
+                for mat in material_item.get("materials", []):
+                    drive_file_wrapper = mat.get("driveFile", {})
+                    drive_file = drive_file_wrapper.get("driveFile", {}) if drive_file_wrapper else {}
+                    link = mat.get("link", {})
+
+                    if drive_file:
+                        mime = drive_file.get("mimeType", "")
+                        title = drive_file.get("title", "Untitled")
+                        url = drive_file.get("alternateLink", "")
+
+                        if "pdf" in mime.lower():
+                            pdfs.append({"title": title, "url": url, "type": "pdf"})
+                        elif "presentation" in mime.lower():
+                            slides.append({"title": title, "url": url, "type": "slides"})
+                        else:
+                            links.append({"title": title, "url": url, "type": "drive"})
+
+                    if link:
+                        url = link.get("url", "")
+                        title = link.get("title", url)
+                        links.append({"title": title, "url": url, "type": "link"})
+
+        except Exception as e:
+            print(f"Failed to fetch materials for course {course_name} ({course_id}): {e}")
+
+        all_courses_materials.append({
+            "courseId": course_id,
+            "courseName": course_name,
+            "pdfs": pdfs,
+            "slides": slides,
+            "links": links,
+        })
+
+    return all_courses_materials
+
+
+def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, subject: str) -> dict:
+    import io
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    from google.oauth2.credentials import Credentials
+
+    creds = Credentials(token=access_token)
+    service = build("drive", "v3", credentials=creds)
+
+    file_metadata = {
+        "name": filename,
+        "description": f"Class notes - {subject}",
+    }
+
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/pdf")
+
+    uploaded = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, name, webViewLink",
+    ).execute()
+
+    service.permissions().create(
+        fileId=uploaded["id"],
+        body={"type": "anyone", "role": "reader"},
+    ).execute()
+
+    return {
+        "drive_file_id": uploaded["id"],
+        "drive_view_link": uploaded["webViewLink"],
+        "filename": uploaded["name"],
+    }
