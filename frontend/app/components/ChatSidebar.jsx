@@ -29,6 +29,7 @@ function PlusIcon() {
 
 export default function ChatSidebar({
   course,
+  courses,
   channels,
   conversations,
   activeView,
@@ -36,6 +37,7 @@ export default function ChatSidebar({
   onSelectDM,
   onStartDM,
   onChannelCreated,
+  onSelectCourse,
   currentUser,
   token,
   courseId,
@@ -54,7 +56,22 @@ export default function ChatSidebar({
     <>
       <aside className={styles.sidebar}>
         <div className={styles.header}>
-          <div className={styles.courseName}>{course?.name ?? "Loading…"}</div>
+          {courses && courses.length > 1 ? (
+            <select
+              className={styles.courseSelect}
+              value={course?.school_course_id ?? ""}
+              onChange={(e) => {
+                const selected = courses.find(c => c.school_course_id === e.target.value);
+                if (selected && onSelectCourse) onSelectCourse(selected);
+              }}
+            >
+              {courses.map(c => (
+                <option key={c.school_course_id} value={c.school_course_id}>{c.name}</option>
+              ))}
+            </select>
+          ) : (
+            <div className={styles.courseName}>{course?.name ?? "Loading…"}</div>
+          )}
           <div className={styles.courseMeta}>
             {course?.course_code ?? course?.courseCode ?? ""}
             {course?.term ? ` · ${course.term}` : ""}

@@ -34,10 +34,13 @@ export default function Connect() {
 
   const checkGoogleConnection = async () => {
     setCheckingConnection(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
       const res = await fetch("http://localhost:8000/auth/google/me", {
         credentials: "include",
+        signal: controller.signal,
       });
 
       if (res.ok) {
@@ -47,9 +50,12 @@ export default function Connect() {
         setGoogleConnected(false);
       }
     } catch (err) {
-      console.error("Failed to check Google connection:", err);
+      if (err.name !== "AbortError") {
+        console.error("Failed to check Google connection:", err);
+      }
       setGoogleConnected(false);
     } finally {
+      clearTimeout(timeout);
       setCheckingConnection(false);
     }
   };
