@@ -40,17 +40,18 @@ TOP_K_RESULTS = 6
 OLLAMA_LLM_MODEL = "llama3.2"
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 
-CHROMA_PATH = "./chroma_db"
+# Absolute path so ChromaDB works regardless of working directory
+CHROMA_PATH = str(Path(__file__).resolve().parent.parent.parent / "chroma_db")
 COLLECTION_NAME = "nexus_documents"
 
 # ============================================================
 # SINGLETONS — initialised once at module load
 # ============================================================
 
-_chroma_client: chromadb.PersistentClient | None = None
-_collection: chromadb.Collection | None = None
-_embeddings: OllamaEmbeddings | None = None
-_llm: ChatOllama | None = None
+_chroma_client: Optional[chromadb.PersistentClient] = None
+_collection: Optional[chromadb.Collection] = None
+_embeddings: Optional[OllamaEmbeddings] = None
+_llm: Optional[ChatOllama] = None
 
 
 def get_chroma_collection() -> chromadb.Collection:
@@ -275,8 +276,8 @@ def delete_file_from_index(filename: str) -> int:
 # ANSWER GENERATION (streaming)
 # ============================================================
 
-SYSTEM_PROMPT = """You are Nexus AI, an academic assistant embedded inside a course hub.
-You answer questions STRICTLY using the provided course materials — never invent facts.
+SYSTEM_PROMPT = """You are SARS AI, an academic assistant embedded inside a course hub.
+You answer questions STRICTLY using the provided course materials — never create your own facts.
 
 Rules:
 1. Ground every claim in the retrieved context below.
@@ -285,6 +286,8 @@ Rules:
 4. Be concise but complete. Use markdown (bold, bullet lists) where it aids clarity.
 5. Do not refer to the retrieval mechanics — just answer naturally."""
 
+
+# Testing
 
 def build_context_block(chunks: list[dict]) -> str:
     """Format retrieved chunks into a context string for the prompt."""
@@ -347,7 +350,7 @@ def stream_answer(query: str, conversation_history: list[dict]) -> Iterator[str]
     yield "data: " + json.dumps({"type": "done"}) + "\n\n"
 
 
-def answer_question(query: str, conversation_history: list[dict] | None = None) -> dict:
+def answer_question(query: str, conversation_history: Optional[list] = None) -> dict:
     if conversation_history is None:
         conversation_history = []
 

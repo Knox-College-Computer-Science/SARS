@@ -5,10 +5,9 @@ google-auth-oauthlib
 google-api-python-client
 google-auth
 requests
-itsdangerous
-starlette
 beautifulsoup4
 itsdangerous
+starlette
 sqlalchemy>=2.0
 python-socketio>=5.11.0
 python-multipart>=0.0.9
