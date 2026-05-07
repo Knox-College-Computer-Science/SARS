@@ -1,16 +1,15 @@
-import os
-import shutil
+import io
 import sqlite3
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 router = APIRouter(tags=["Notes"])
 
-BASE_DIR    = Path(__file__).resolve().parent.parent.parent  # /backend/
-UPLOAD_DIR  = BASE_DIR / "uploads"
-NOTES_DB    = BASE_DIR / "notes.db"
+BASE_DIR   = Path(__file__).resolve().parent.parent.parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+NOTES_DB   = BASE_DIR / "notes.db"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -19,12 +18,25 @@ def _get_conn():
     conn = sqlite3.connect(str(NOTES_DB))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS notes (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename    TEXT,
-            subject     TEXT,
-            upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename        TEXT,
+            subject         TEXT,
+            upload_time     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            uploaded_by     TEXT,
+            drive_file_id   TEXT,
+            drive_view_link TEXT
         )
     """)
+    for col, col_type in [
+        ("uploaded_by",     "TEXT"),
+        ("drive_file_id",   "TEXT"),
+        ("drive_view_link", "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     return conn
 
@@ -35,26 +47,43 @@ async def upload_note(
     file: UploadFile = File(...),
     subject: str = Form(...),
 ):
-    if not request.session.get("access_token"):
-        raise HTTPException(
-            status_code=401,
-            detail="Connect to Google Classroom before uploading notes."
-        )
-    
-    dest = UPLOAD_DIR / file.filename
     file_bytes = await file.read()
+    access_token = request.session.get("access_token")
+    session_user = request.session.get("user")
+    uploaded_by = session_user.get("email") if session_user else "anonymous"
 
-    with dest.open("wb") as buf:
-        buf.write(file_bytes)
+    drive_file_id = None
+    drive_view_link = None
+
+    if access_token:
+        try:
+            from app.services.google_oauth import upload_file_to_drive
+            drive_result = upload_file_to_drive(
+                access_token=access_token,
+                file_bytes=file_bytes,
+                filename=file.filename,
+                subject=subject,
+            )
+            drive_file_id   = drive_result["drive_file_id"]
+            drive_view_link = drive_result["drive_view_link"]
+        except Exception as e:
+            print(f"[Drive] Upload failed, falling back to local: {e}")
+
+    if not drive_file_id:
+        dest = UPLOAD_DIR / file.filename
+        with dest.open("wb") as buf:
+            buf.write(file_bytes)
 
     conn = _get_conn()
-    conn.execute("INSERT INTO notes (filename, subject) VALUES (?, ?)", (file.filename, subject))
+    conn.execute(
+        "INSERT INTO notes (filename, subject, uploaded_by, drive_file_id, drive_view_link) VALUES (?, ?, ?, ?, ?)",
+        (file.filename, subject, uploaded_by, drive_file_id, drive_view_link),
+    )
     conn.commit()
     conn.close()
 
-    # Auto-index PDFs into the RAG vector store so they're immediately searchable
     rag_indexed = False
-    if file.filename and file.filename.lower().endswith(".pdf"):
+    if file.filename.lower().endswith(".pdf"):
         try:
             from app.rag.rag_pipeline import index_pdf
             index_pdf(file_bytes, file.filename)
@@ -66,15 +95,30 @@ async def upload_note(
         "message": "Uploaded successfully",
         "filename": file.filename,
         "rag_indexed": rag_indexed,
+        "drive_file_id": drive_file_id,
+        "drive_view_link": drive_view_link,
     }
 
 
 @router.get("/notes")
 def get_notes():
     conn = _get_conn()
-    rows = conn.execute("SELECT id, filename, subject, upload_time FROM notes").fetchall()
+    rows = conn.execute(
+        "SELECT id, filename, subject, upload_time, uploaded_by, drive_file_id, drive_view_link FROM notes"
+    ).fetchall()
     conn.close()
-    return [{"id": r[0], "filename": r[1], "subject": r[2], "upload_time": r[3]} for r in rows]
+    return [
+        {
+            "id": r[0],
+            "filename": r[1],
+            "subject": r[2],
+            "upload_time": r[3],
+            "uploaded_by": r[4],
+            "drive_file_id": r[5],
+            "drive_view_link": r[6],
+        }
+        for r in rows
+    ]
 
 
 @router.get("/files/{filename}")

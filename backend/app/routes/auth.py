@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from database import get_db
-from models import Course, CourseEnrollment, User
+from models import Channel, Course, CourseEnrollment, User
 from security import create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -220,6 +220,93 @@ def school_launch(body: SchoolLaunchRequest, request: Request, db: Session = Dep
         "token": create_access_token(user.id),
         "user": _serialize_user(user),
         "course": _serialize_course(course),
+    }
+
+
+@router.post("/sync-courses")
+def sync_courses(request: Request, db: Session = Depends(get_db)):
+    from app.routes.classroom import get_courses_from_google
+    from app.services.knox_calendar import get_current_knox_term
+
+    session_user = request.session.get("user")
+    nexus_token = request.session.get("nexus_token")
+
+    if not session_user:
+        raise HTTPException(status_code=401, detail="Not connected to Google Classroom")
+
+    user = db.query(User).filter(User.school_email == session_user.get("email")).first()
+    if not user:
+        user = User(
+            school_email=session_user.get("email", ""),
+            display_name=session_user.get("name", ""),
+            initials=_get_initials(session_user.get("name", "")),
+        )
+        db.add(user)
+        db.flush()
+
+    user_id = user.id
+
+    if not nexus_token:
+        nexus_token = create_access_token(user_id)
+        request.session["nexus_token"] = nexus_token
+        request.session["nexus_user_id"] = user_id
+
+    google_courses = get_courses_from_google(request)
+    current_term = get_current_knox_term() or "Spring 2026"
+
+    synced_courses = []
+    for google_course in google_courses:
+        google_course_id = google_course.get("id")
+        course_name = google_course.get("name", "")
+        section = google_course.get("section", "")
+
+        if not google_course_id:
+            continue
+
+        course = db.query(Course).filter(Course.school_course_id == google_course_id).first()
+        if not course:
+            course = Course(
+                school_course_id=google_course_id,
+                name=course_name,
+                course_code=section or google_course_id,
+                teacher_name="",
+                term=current_term,
+            )
+            db.add(course)
+            db.flush()
+            db.add(Channel(course_id=course.id, name="general", channel_type="general", position=0))
+            db.add(Channel(course_id=course.id, name="announcements", channel_type="announcements", position=1))
+            db.flush()
+
+        course_id = course.id
+        course_data = _serialize_course(course)
+
+        enrollment = (
+            db.query(CourseEnrollment)
+            .filter(
+                CourseEnrollment.course_id == course_id,
+                CourseEnrollment.user_id == user_id,
+            )
+            .first()
+        )
+        if not enrollment:
+            db.add(CourseEnrollment(course_id=course_id, user_id=user_id, role="student"))
+
+        synced_courses.append(course_data)
+
+    db.commit()
+
+    serialized_user = {
+        "id": user_id,
+        "name": session_user.get("name", ""),
+        "initials": _get_initials(session_user.get("name", "")),
+        "email": session_user.get("email", ""),
+    }
+
+    return {
+        "token": nexus_token,
+        "user": serialized_user,
+        "courses": synced_courses,
     }
 
 
