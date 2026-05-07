@@ -1,27 +1,31 @@
-from pathlib import Path
 from fastapi import UploadFile
+import os
 
-from app.rag.rag_pipeline import index_pdf, answer_question
+from app.rag.rag_pipeline import index_pdf
+from app.rag.rag_pipeline import answer_question
 
-UPLOAD_FOLDER = Path(__file__).resolve().parent.parent.parent / "RAG_Uploads"
+upload_folder = "RAG_Uploads"
 
 
 def save_uploaded_file(file: UploadFile):
-    UPLOAD_FOLDER.mkdir(exist_ok=True)
-    file_path = UPLOAD_FOLDER / file.filename
-    file_bytes = file.file.read()
+    if not os.path.exists(upload_folder):
+        os.makedirs(upload_folder)
+
+    file_path = os.path.join(upload_folder, file.filename)
 
     with open(file_path, "wb") as buffer:
-        buffer.write(file_bytes)
+        buffer.write(file.file.read())
+
+    with open(file_path, "rb") as saved_file:
+        file_bytes = saved_file.read()
 
     index_result = index_pdf(file_bytes, file.filename)
 
     return {
-        "file_path": str(file_path),
+        "file_path": file_path,
         "file_name": file.filename,
         "index_result": index_result,
     }
-
 
 def get_chat_answer(question: str):
     return answer_question(question)
