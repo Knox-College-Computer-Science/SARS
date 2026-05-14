@@ -19,7 +19,7 @@ export default function UploadBox() {
     setLoadingCourses(true);
 
     try {
-      const res = await fetch("http://localhost:8000/classroom/courses", {
+      const res = await fetch("/api/classroom/courses", {
         credentials: "include",
       });
 
@@ -57,7 +57,7 @@ export default function UploadBox() {
     formData.append("subject", subject);
 
     try {
-      const res = await fetch("http://localhost:8000/upload", {
+      const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
         credentials: "include",

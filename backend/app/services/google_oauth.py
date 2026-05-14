@@ -64,13 +64,31 @@ def get_user_info(access_token: str) -> dict:
 
 def get_classroom_courses(access_token: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
-    response = requests.get(
-        "https://classroom.googleapis.com/v1/courses",
-        headers=headers,
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    all_courses = []
+    page_token = None
+
+    while True:
+        params = {
+            "pageSize": 50,
+            "courseStates": ["ACTIVE", "ARCHIVED"],
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(
+            "https://classroom.googleapis.com/v1/courses",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        all_courses.extend(data.get("courses", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return {"courses": all_courses}
 
 def get_course_announcements(access_token: str, course_id: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
