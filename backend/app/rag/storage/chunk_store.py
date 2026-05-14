@@ -1,33 +1,7 @@
 """
-storage/chunk_store.py — Context & Parent Chunk Store
-=======================================================
 
 Stores ContextChunks and ParentChunks in per-course JSON files.
-ChromaDB holds the retrieval chunks (with embeddings).
-This store holds everything else the LLM needs.
 
-FILE LAYOUT:
-  rag_storage/chunk_store/
-    course_1_chunks.json
-    course_2_chunks.json
-    ...
-
-Each file has the structure:
-  {
-    "contexts": { chunk_id: ContextChunk.to_dict(), ... },
-    "parents":  { parent_id: ParentChunk.to_dict(), ... }
-  }
-
-UPGRADE PATH TO POSTGRES:
-  Replace the read/write methods below with SQLAlchemy queries.
-  The public interface (save_context, get_context, save_parent, etc.)
-  stays identical so nothing above this layer needs to change.
-
-WHY JSON FOR MVP?
-  - Zero setup (no Postgres instance needed)
-  - Human-readable (easy to debug)
-  - Fast enough for < 10K chunks per course
-  - One file per course means no cross-course contamination
 """
 
 import json
@@ -162,19 +136,7 @@ def get_parent_chunks_batch(
 # ── Deletion ────────────────────────────────────────────────────
 
 def delete_by_file_id(course_id: str, file_id: str) -> tuple[int, int]:
-    """
-    Remove all context and parent chunks belonging to a specific file.
-    Returns (contexts_deleted, parents_deleted).
 
-    We determine ownership by:
-      - context chunks: source_filename matches (we stored file_id in metadata)
-      - parent chunks: source_filename matches
-
-    Note: we check file_id via source_filename because chunk_store was built
-    with file_id embedded when we can find it, falling back to filename.
-    The safer approach is to store file_id explicitly in the JSON, which
-    we do via the metadata dict.
-    """
     with _lock_for(course_id):
         data = _load(course_id)
 
@@ -219,10 +181,7 @@ def delete_course(course_id: str) -> bool:
 
 
 def list_files(course_id: str) -> list[dict]:
-    """
-    Return a deduplicated list of all files indexed for a course,
-    derived from the context chunk metadata.
-    """
+
     data = _load(course_id)
     files: dict[str, dict] = {}
     for ctx in data["contexts"].values():
