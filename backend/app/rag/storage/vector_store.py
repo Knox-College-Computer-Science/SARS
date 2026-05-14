@@ -1,17 +1,3 @@
-"""
-storage/vector_store.py — ChromaDB Wrapper
-============================================
-
-Thin wrapper around ChromaDB.
-Owns everything related to the vector database:
-  - Client lifecycle (one persistent client, singleton)
-  - Per-course collection management (create on demand, cache)
-  - Upsert, query, delete operations
-
-Nothing in this file knows about chunks, embeddings, or retri   eval
-logic. It just stores and retrieves raw vectors + metadata.
-"""
-
 import re
 import hashlib
 import logging
@@ -45,17 +31,7 @@ def _get_client() -> chromadb.PersistentClient:
 
 
 def _collection_name(course_id: str) -> str:
-    """
-    Build a ChromaDB-safe collection name from a course_id.
 
-    ChromaDB rules:
-      - 3 – 63 characters
-      - [a-zA-Z0-9_-] only
-      - Must start and end with alphanumeric
-
-    We prefix with COLLECTION_PREFIX ("nexus_") and sanitise.
-    If the result is still too long we hash the course_id.
-    """
     sanitised = re.sub(r"[^a-zA-Z0-9_-]", "_", course_id).strip("_-")
     name = f"{COLLECTION_PREFIX}{sanitised}"
 
@@ -70,15 +46,7 @@ def _collection_name(course_id: str) -> str:
 
 
 def get_course_collection(course_id: str) -> chromadb.Collection:
-    """
-    Return the ChromaDB collection for a course, creating it if needed.
-    Collections are cached in-process so get_or_create is only called once.
 
-    WHY ONE COLLECTION PER COURSE?
-    - Isolation: a bug cannot leak Chemistry chunks into Physics results
-    - Performance: smaller index = faster ANN search
-    - Cleanup: dropping a course = dropping one collection
-    """
     if course_id not in _collections:
         client = _get_client()
         name = _collection_name(course_id)
@@ -99,10 +67,7 @@ def upsert_chunks(
     documents: list[str],
     metadatas: list[dict],
 ) -> None:
-    """
-    Upsert retrieval chunks into the course collection.
-    Uses upsert (not add) so re-indexing a file is idempotent.
-    """
+
     if not ids:
         return
     collection = get_course_collection(course_id)
@@ -116,10 +81,7 @@ def upsert_chunks(
 
 
 def delete_by_file_id(course_id: str, file_id: str) -> int:
-    """
-    Delete all chunks belonging to a specific file.
-    Returns the number of chunks deleted.
-    """
+
     collection = get_course_collection(course_id)
     if collection.count() == 0:
         return 0
