@@ -280,6 +280,7 @@ def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, su
         fields="id, name, webViewLink",
     ).execute()
 
+    #  viewable by anyone with the link
     service.permissions().create(
         fileId=uploaded["id"],
         body={"type": "anyone", "role": "reader"},

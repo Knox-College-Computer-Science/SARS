@@ -163,9 +163,7 @@ export default function NotesPage() {
         <button
           onClick={() => setSelectedSubject("All")}
           className={`px-3 py-1 rounded-full text-sm ${
-            selectedSubject === "All"
-              ? "bg-green-500"
-              : "bg-[#444654] hover:bg-gray-600"
+            selectedSubject === "All" ? "bg-green-500" : "bg-[#444654] hover:bg-gray-600"
           }`}
         >
           All
@@ -211,6 +209,7 @@ export default function NotesPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Preview toggle button */}
               <button
                 onClick={() => setPreviewNote(previewNote?.id === note.id ? null : note)}
                 className={`px-3 py-1 rounded text-sm transition ${
@@ -221,10 +220,11 @@ export default function NotesPage() {
               >
                 {previewNote?.id === note.id ? "Close" : "Preview"}
               </button>
+
+              {/* Open in new tab */}
               <a
-                href={note.drive_view_link || `/api/files/${note.filename}`}
+                href={note.drive_view_link || `http://localhost:8000/files/${note.filename}`}
                 target="_blank"
-                rel="noopener noreferrer"
                 className="bg-[#555770] px-3 py-1 rounded text-sm hover:bg-gray-600 transition"
               >
                 Open ↗
@@ -232,6 +232,7 @@ export default function NotesPage() {
             </div>
           </div>
 
+          /* Inline PDF preview — Drive or local fallback */
           {previewNote?.id === note.id && (
             <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
               <iframe
