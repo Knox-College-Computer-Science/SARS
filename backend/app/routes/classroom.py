@@ -5,28 +5,10 @@ from app.services.google_oauth import get_all_announcements_for_courses
 from app.services.google_oauth import get_all_assignments_for_courses
 from app.services.google_oauth import get_all_materials_for_courses
 from app.services.google_oauth import get_classroom_courses
-from app.services.knox_calendar import get_current_knox_term
 from app.services.knox_calendar import get_current_knox_term_info
 import requests
 
 router = APIRouter(prefix="/classroom", tags=["Classroom"])
-
-def is_current_term_course(course: dict) -> bool:
-    current_term = get_current_knox_term()
-
-    if not current_term:
-        return False
-
-    name = course.get("name") or ""
-    section = course.get("section") or ""
-
-    return (
-        course.get("courseState") == "ACTIVE"
-        and (
-            current_term.lower() in name.lower()
-            or current_term.lower() in section.lower()
-        )
-    )
 
 def get_courses_from_google(request: Request):
     access_token = request.session.get("access_token")
@@ -59,14 +41,15 @@ def get_courses_from_google(request: Request):
 
     courses = []
     for course in raw_courses:
-        if is_current_term_course(course):
-            courses.append({
-                "id": course.get("id"),
-                "name": course.get("name"),
-                "section": course.get("section"),
-                "subject": course.get("subject"),
-                "calendarId": course.get("calendarId"),
-            })
+        courses.append({
+            "id": course.get("id"),
+            "name": course.get("name"),
+            "section": course.get("section"),
+            "subject": course.get("subject"),
+            "calendarId": course.get("calendarId"),
+            "courseState": course.get("courseState"),
+            "creationTime": course.get("creationTime"),
+        })
 
     return courses
 

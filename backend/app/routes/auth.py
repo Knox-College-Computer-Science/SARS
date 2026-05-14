@@ -41,18 +41,17 @@ def _simplify_user(user_info: dict) -> dict:
 
 def _simplify_courses(courses_data: dict) -> list:
     raw_courses = courses_data.get("courses", [])
-    active_courses = []
+    result = []
     for course in raw_courses:
-        if course.get("courseState") != "ACTIVE":
-            continue
-        active_courses.append({
+        result.append({
             "id": course.get("id"),
             "name": course.get("name"),
             "section": course.get("section"),
             "subject": course.get("subject"),
             "calendarId": course.get("calendarId"),
+            "courseState": course.get("courseState"),
         })
-    return active_courses
+    return result
 
 
 def _serialize_user(user: User) -> dict:
@@ -136,7 +135,8 @@ def google_callback(
     request.session["nexus_token"] = nexus_token
     request.session["nexus_user_id"] = db_user.id
 
-    return RedirectResponse(url="http://localhost:3000/connect?connected=true")
+    from app.config import FRONTEND_URL
+    return RedirectResponse(url=f"{FRONTEND_URL}/connect?connected=true")
 
 
 @router.get("/google/me")
@@ -259,6 +259,15 @@ def sync_courses(request: Request, db: Session = Depends(get_db)):
         google_course_id = google_course.get("id")
         course_name = google_course.get("name", "")
         section = google_course.get("section", "")
+        creation_time = google_course.get("creationTime", "")
+
+        # Use section as term label if set; otherwise fall back to creation year
+        if section:
+            term = section
+        elif creation_time:
+            term = creation_time[:4]
+        else:
+            term = current_term
 
         if not google_course_id:
             continue
@@ -270,7 +279,7 @@ def sync_courses(request: Request, db: Session = Depends(get_db)):
                 name=course_name,
                 course_code=section or google_course_id,
                 teacher_name="",
-                term=current_term,
+                term=term,
             )
             db.add(course)
             db.flush()

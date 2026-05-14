@@ -1,4 +1,4 @@
-const BASE = "http://localhost:8000";
+const BASE = "/api";
 
 async function req(path, options = {}) {
   const { headers: extraHeaders, ...rest } = options;

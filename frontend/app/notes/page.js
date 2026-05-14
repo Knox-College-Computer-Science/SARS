@@ -23,7 +23,7 @@ export default function NotesPage() {
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-      const res = await fetch("http://localhost:8000/auth/google/me", {
+      const res = await fetch("/api/auth/google/me", {
         credentials: "include",
         signal: controller.signal,
       });
@@ -57,7 +57,7 @@ export default function NotesPage() {
     setLoadingCourses(true);
 
     try {
-      const res = await fetch("http://localhost:8000/classroom/courses", {
+      const res = await fetch("/api/classroom/courses", {
         credentials: "include",
       });
 
@@ -84,7 +84,7 @@ export default function NotesPage() {
   const fetchNotes = async () => {
     setLoadingNotes(true);
     try {
-      const res = await fetch("http://localhost:8000/notes", {
+      const res = await fetch("/api/notes", {
         credentials: "include",
       });
       const data = await res.json();
@@ -99,7 +99,7 @@ export default function NotesPage() {
   const fetchClassroomMaterialsData = async () => {
     setLoadingMaterials(true);
     try {
-      const res = await fetch("http://localhost:8000/classroom/materials", {
+      const res = await fetch("/api/classroom/materials", {
         credentials: "include",
       });
       if (!res.ok) return;
@@ -222,7 +222,7 @@ export default function NotesPage() {
                 {previewNote?.id === note.id ? "Close" : "Preview"}
               </button>
               <a
-                href={note.drive_view_link || `http://localhost:8000/files/${note.filename}`}
+                href={note.drive_view_link || `/api/files/${note.filename}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="bg-[#555770] px-3 py-1 rounded text-sm hover:bg-gray-600 transition"
@@ -238,7 +238,7 @@ export default function NotesPage() {
                 src={
                   note.drive_file_id
                     ? `https://drive.google.com/file/d/${note.drive_file_id}/preview`
-                    : `http://localhost:8000/files/${note.filename}`
+                    : `/api/files/${note.filename}`
                 }
                 title={note.filename}
                 className="w-full"
