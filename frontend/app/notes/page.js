@@ -4,11 +4,14 @@ import { useEffect, useState } from "react";
 export default function NotesPage() {
   const [notes, setNotes] = useState([]);
   const [courses, setCourses] = useState([]);
+  const [classroomMaterials, setClassroomMaterials] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState("All");
   const [isConnected, setIsConnected] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(true);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
+  const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [previewNote, setPreviewNote] = useState(null);
 
   useEffect(() => {
     checkGoogleConnection();
@@ -16,10 +19,13 @@ export default function NotesPage() {
 
   const checkGoogleConnection = async () => {
     setCheckingConnection(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-      const res = await fetch("http://localhost:8000/auth/google/me", {
+      const res = await fetch("/api/auth/google/me", {
         credentials: "include",
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -28,18 +34,21 @@ export default function NotesPage() {
       }
 
       const data = await res.json();
+      const connected = Boolean(data.user && data.has_access_token);
+      setIsConnected(connected);
 
-      if (data.user && data.has_access_token) {
-        setIsConnected(true);
-        await fetchCourses();
-        await fetchNotes();
-      } else {
-        setIsConnected(false);
+      if (connected) {
+        fetchCourses();
+        fetchNotes();
+        fetchClassroomMaterialsData();
       }
     } catch (err) {
-      console.error("Failed to check Google connection:", err);
+      if (err.name !== "AbortError") {
+        console.error("Failed to check Google connection:", err);
+      }
       setIsConnected(false);
     } finally {
+      clearTimeout(timeout);
       setCheckingConnection(false);
     }
   };
@@ -48,7 +57,7 @@ export default function NotesPage() {
     setLoadingCourses(true);
 
     try {
-      const res = await fetch("http://localhost:8000/classroom/courses", {
+      const res = await fetch("/api/classroom/courses", {
         credentials: "include",
       });
 
@@ -75,7 +84,7 @@ export default function NotesPage() {
   const fetchNotes = async () => {
     setLoadingNotes(true);
     try {
-      const res = await fetch("http://localhost:8000/notes", {
+      const res = await fetch("/api/notes", {
         credentials: "include",
       });
       const data = await res.json();
@@ -84,6 +93,22 @@ export default function NotesPage() {
       console.error("Failed to fetch notes:", err);
     } finally {
       setLoadingNotes(false);
+    }
+  };
+
+  const fetchClassroomMaterialsData = async () => {
+    setLoadingMaterials(true);
+    try {
+      const res = await fetch("/api/classroom/materials", {
+        credentials: "include",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setClassroomMaterials(data.materials || []);
+    } catch (err) {
+      console.error("Failed to fetch classroom materials:", err);
+    } finally {
+      setLoadingMaterials(false);
     }
   };
 
@@ -174,25 +199,147 @@ export default function NotesPage() {
       )}
 
       {filteredNotes.map((note) => (
-        <div
-          key={note.id}
-          className="bg-[#444654] p-4 mb-3 rounded-lg flex items-center justify-between"
-        >
-          <div>
-            <p className="font-medium">{note.filename}</p>
-            <p className="text-sm text-gray-400">{note.subject}</p>
-            <p className="text-xs text-gray-500">{note.upload_time}</p>
+        <div key={note.id} className="mb-3">
+          <div className="bg-[#444654] p-4 rounded-lg flex items-center justify-between">
+            <div>
+              <p className="font-medium">{note.filename}</p>
+              <p className="text-sm text-gray-400">{note.subject}</p>
+              <p className="text-xs text-gray-500">{note.upload_time}</p>
+              {note.uploaded_by && (
+                <p className="text-xs text-gray-500">by {note.uploaded_by}</p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPreviewNote(previewNote?.id === note.id ? null : note)}
+                className={`px-3 py-1 rounded text-sm transition ${
+                  previewNote?.id === note.id
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-blue-500 hover:bg-blue-600"
+                }`}
+              >
+                {previewNote?.id === note.id ? "Close" : "Preview"}
+              </button>
+              <a
+                href={note.drive_view_link || `/api/files/${note.filename}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-[#555770] px-3 py-1 rounded text-sm hover:bg-gray-600 transition"
+              >
+                Open ↗
+              </a>
+            </div>
           </div>
 
-          <a
-            href={`http://localhost:8000/files/${note.filename}`}
-            target="_blank"
-            className="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition"
-          >
-            View
-          </a>
+          {previewNote?.id === note.id && (
+            <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
+              <iframe
+                src={
+                  note.drive_file_id
+                    ? `https://drive.google.com/file/d/${note.drive_file_id}/preview`
+                    : `/api/files/${note.filename}`
+                }
+                title={note.filename}
+                className="w-full"
+                style={{ height: "520px", border: "none" }}
+              />
+            </div>
+          )}
         </div>
       ))}
+
+      {/* Classroom Materials section */}
+      <div className="mt-10">
+        <h2 className="text-xl font-semibold mb-5">Classroom Materials</h2>
+
+        {loadingMaterials && (
+          <p className="text-gray-400 text-sm">Loading classroom materials...</p>
+        )}
+
+        {!loadingMaterials && classroomMaterials.length === 0 && (
+          <p className="text-gray-500 text-sm">No classroom materials found for this term.</p>
+        )}
+
+        {!loadingMaterials && classroomMaterials.map((courseData) => (
+          <div key={courseData.courseId} className="mb-8">
+            <div className="flex items-center gap-2 mb-3 border-b border-gray-600 pb-2">
+              <span className="text-base">📁</span>
+              <h3 className="text-base font-semibold text-gray-200">{courseData.courseName}</h3>
+            </div>
+
+            {courseData.pdfs.length === 0 && courseData.slides.length === 0 && courseData.links.length === 0 && (
+              <p className="ml-5 text-sm text-gray-500">No materials posted yet.</p>
+            )}
+
+            {courseData.pdfs.length > 0 && (
+              <div className="ml-5 mb-4">
+                <p className="text-xs text-gray-400 uppercase tracking-widest mb-2 font-semibold">PDFs</p>
+                {courseData.pdfs.map((item, i) => (
+                  <div key={i} className="bg-[#444654] p-4 mb-3 rounded-lg flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-gray-400">{courseData.courseName}</p>
+                    </div>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition"
+                    >
+                      View
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {courseData.slides.length > 0 && (
+              <div className="ml-5 mb-4">
+                <p className="text-xs text-gray-400 uppercase tracking-widest mb-2 font-semibold">Slides</p>
+                {courseData.slides.map((item, i) => (
+                  <div key={i} className="bg-[#444654] p-4 mb-3 rounded-lg flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-gray-400">{courseData.courseName}</p>
+                    </div>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition"
+                    >
+                      View
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {courseData.links.length > 0 && (
+              <div className="ml-5 mb-4">
+                <p className="text-xs text-gray-400 uppercase tracking-widest mb-2 font-semibold">Links</p>
+                {courseData.links.map((item, i) => (
+                  <div key={i} className="bg-[#444654] p-4 mb-3 rounded-lg flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-gray-400">{courseData.courseName}</p>
+                    </div>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-blue-500 px-3 py-1 rounded text-sm hover:bg-blue-600 transition"
+                    >
+                      View
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

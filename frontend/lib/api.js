@@ -1,4 +1,4 @@
-const BASE = "http://localhost:8000";
+const BASE = "/api";
 
 async function req(path, options = {}) {
   const { headers: extraHeaders, ...rest } = options;
@@ -39,6 +39,20 @@ export function schoolLaunch(courseId = "CHEM101") {
   return req("/auth/school-launch", {
     method: "POST",
     body: JSON.stringify({ course_id: courseId, token: "test" }),
+    credentials: "include",
+  });
+}
+
+export function syncClassroomCourses() {
+  return req("/auth/sync-courses", {
+    method: "POST",
+    body: JSON.stringify({}),
+    credentials: "include",
+  });
+}
+
+export function fetchClassroomMaterials() {
+  return req("/classroom/materials", {
     credentials: "include",
   });
 }
