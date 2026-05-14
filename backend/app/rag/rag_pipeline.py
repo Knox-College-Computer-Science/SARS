@@ -51,6 +51,7 @@ TOP_K_RETRIEVAL = 20
 TOP_K_FINAL = 6
 
 LLM_MODEL = "llama3.2"
+IMAGE_MODEL = "llava"
 EMBED_MODEL = "nomic-embed-text"
 
 # Absolute path so ChromaDB works regardless of working directory
