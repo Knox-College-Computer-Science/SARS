@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 
-const API = "http://localhost:8000";
+const API = "/api";
 
 export default function AIPage() {
   const [messages, setMessages] = useState([
