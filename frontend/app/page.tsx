@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import ChatBox from "./components/ChatBox";
 
 type ClassroomAssignment = {
   id: string;
@@ -69,9 +68,11 @@ function formatAnnouncementDate(date: Date) {
   });
 }
 
-function getAnnouncementPreview(text: string, maxLength = 160) {
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength).trim() + "...";
+function getAnnouncementPreview(text: string, maxLength = 140) {
+  const cleanText = text.replace(/\s+/g, " ").trim();
+
+  if (cleanText.length <= maxLength) return cleanText;
+  return cleanText.slice(0, maxLength).trim() + "...";
 }
 
 export default function Home() {
@@ -175,154 +176,152 @@ export default function Home() {
   };
 
   return (
-    <div className="p-8 text-white">
-      <section className="max-w-3xl mx-auto mb-10">
-        <h1 className="text-3xl font-bold mb-6">🔔 Due This Week</h1>
-
-        {!isConnected && (
-          <div className="bg-[#444654] rounded-xl p-6">
-            <h2 className="text-xl font-semibold mb-2">
-              Connect Google Classroom
-            </h2>
-            <p className="text-gray-300 mb-4">
-              Connect Google Classroom to see assignments due soon.
-            </p>
-            <a
-              href="/connect"
-              className="inline-block bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg"
-            >
-              Go to Connect Page
-            </a>
-          </div>
-        )}
-
-        {isConnected && loadingAssignments && (
-          <p className="text-gray-400">Loading assignments...</p>
-        )}
-
-        {isConnected && !loadingAssignments && assignments.length === 0 && (
-          <p className="text-gray-400">No assignments due this week.</p>
-        )}
-
-        {isConnected && !loadingAssignments && assignments.length > 0 && (
-          <div className="space-y-4">
-            {assignments.map((assignment) => {
-              const dueDate = getDueDate(assignment);
-              const daysLeft = dueDate ? getDaysLeft(dueDate) : null;
-
-              return (
-                <div
-                  key={assignment.id}
-                  className="bg-[#444654] rounded-xl p-5 flex items-center justify-between"
-                >
-                  <div>
-                    <h2 className="text-xl font-semibold">
-                      {assignment.title}
-                    </h2>
-                    <p className="text-gray-400">{assignment.courseName}</p>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    {daysLeft !== null && (
-                      <span
-                        className={`px-3 py-1 rounded-full font-semibold text-black ${
-                          daysLeft <= 2 ? "bg-orange-400" : "bg-yellow-400"
-                        }`}
-                      >
-                        {daysLeft === 0
-                          ? "Due today"
-                          : `${daysLeft}d left`}
-                      </span>
-                    )}
-
-                    {assignment.alternateLink && (
-                      <a
-                        href={assignment.alternateLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg"
-                      >
-                        Open
-                      </a>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+    <main className="p-8 text-white max-w-7xl mx-auto">
+      {/* Welcome section */}
+      <section className="text-center mb-10">
+        <h1 className="text-4xl font-bold mb-3">Welcome to SARS</h1>
+        <p className="text-gray-400 text-lg">
+          Stay on top of your upcoming assignments and recent class updates.
+        </p>
       </section>
 
-      <ChatBox />
-      <section className="max-w-3xl mx-auto mb-10">
-        <h1 className="text-3xl font-bold mb-6">📢 Recent Announcements</h1>
+      {/* Disconnected state */}
+      {!isConnected ? (
+        <section className="bg-[#444654] rounded-2xl p-8 max-w-2xl mx-auto">
+          <h2 className="text-2xl font-semibold mb-3">
+            Connect Google Classroom
+          </h2>
+          <p className="text-gray-300 mb-5">
+            Connect Google Classroom to see assignments due soon and recent
+            announcements from your current classes.
+          </p>
+          <a
+            href="/connect"
+            className="inline-block bg-green-500 hover:bg-green-600 px-5 py-2 rounded-lg font-medium"
+          >
+            Go to Connect Page
+          </a>
+        </section>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+          {/* Due Soon Assignments */}
+          <section className="bg-[#202123] border border-gray-700 rounded-2xl p-6">
+            <h2 className="text-2xl font-bold mb-5">🔔 Due This Week</h2>
 
-        {!isConnected && (
-          <div className="bg-[#444654] rounded-xl p-6">
-            <h2 className="text-xl font-semibold mb-2">
-              Connect Google Classroom
-            </h2>
-            <p className="text-gray-300 mb-4">
-              Connect Google Classroom to see recent class announcements.
-            </p>
-            <a
-              href="/connect"
-              className="inline-block bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg"
-            >
-              Go to Connect Page
-            </a>
-          </div>
-        )}
+            {loadingAssignments && (
+              <p className="text-gray-400">Loading assignments...</p>
+            )}
 
-        {isConnected && loadingAnnouncements && (
-          <p className="text-gray-400">Loading announcements...</p>
-        )}
+            {!loadingAssignments && assignments.length === 0 && (
+              <p className="text-gray-400">No assignments due this week.</p>
+            )}
 
-        {isConnected && !loadingAnnouncements && announcements.length === 0 && (
-          <p className="text-gray-400">No announcements from the past 7 days.</p>
-        )}
+            {!loadingAssignments && assignments.length > 0 && (
+              <div className="space-y-4">
+                {assignments.map((assignment) => {
+                  const dueDate = getDueDate(assignment);
+                  const daysLeft = dueDate ? getDaysLeft(dueDate) : null;
 
-        {isConnected && !loadingAnnouncements && announcements.length > 0 && (
-          <div className="space-y-4">
-            {announcements.map((announcement) => {
-              const announcementDate = getAnnouncementDate(announcement);
+                  return (
+                    <div
+                      key={assignment.id}
+                      className="bg-[#444654] rounded-xl p-5 flex items-center justify-between gap-4"
+                    >
+                      <div>
+                        <h3 className="text-lg font-semibold">
+                          {assignment.title}
+                        </h3>
+                        <p className="text-gray-400 text-sm">
+                          {assignment.courseName}
+                        </p>
+                      </div>
 
-              return (
-                <div
-                  key={announcement.id}
-                  className="bg-[#444654] rounded-xl p-5"
-                >
-                  <div className="flex items-start justify-between gap-4 mb-2">
-                    <div>
-                      <h2 className="text-lg font-semibold">
-                        {announcement.courseName}
-                      </h2>
-                      <p className="text-xs text-gray-400">
-                        {formatAnnouncementDate(announcementDate)}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {daysLeft !== null && (
+                          <span
+                            className={`px-3 py-1 rounded-full font-semibold text-black text-sm ${
+                              daysLeft <= 2 ? "bg-orange-400" : "bg-yellow-400"
+                            }`}
+                          >
+                            {daysLeft === 0 ? "Due today" : `${daysLeft}d left`}
+                          </span>
+                        )}
+
+                        {assignment.alternateLink && (
+                          <a
+                            href={assignment.alternateLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm"
+                          >
+                            Open
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* Recent Announcements */}
+          <section className="bg-[#202123] border border-gray-700 rounded-2xl p-6">
+            <h2 className="text-2xl font-bold mb-5">📢 Recent Announcements</h2>
+
+            {loadingAnnouncements && (
+              <p className="text-gray-400">Loading announcements...</p>
+            )}
+
+            {!loadingAnnouncements && announcements.length === 0 && (
+              <p className="text-gray-400">
+                No announcements from the past 7 days.
+              </p>
+            )}
+
+            {!loadingAnnouncements && announcements.length > 0 && (
+              <div className="space-y-4">
+                {announcements.map((announcement) => {
+                  const announcementDate = getAnnouncementDate(announcement);
+
+                  return (
+                    <div
+                      key={announcement.id}
+                      className="bg-[#444654] rounded-xl p-5"
+                    >
+                      <div className="flex items-start justify-between gap-4 mb-3">
+                        <div>
+                          <h3 className="text-lg font-semibold">
+                            {announcement.courseName}
+                          </h3>
+                          <p className="text-xs text-gray-400">
+                            {formatAnnouncementDate(announcementDate)}
+                          </p>
+                        </div>
+
+                        {announcement.alternateLink && (
+                          <a
+                            href={announcement.alternateLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm"
+                          >
+                            Open
+                          </a>
+                        )}
+                      </div>
+
+                      <p className="text-gray-200 text-sm leading-relaxed">
+                        {getAnnouncementPreview(announcement.text)}
                       </p>
                     </div>
-
-                    {announcement.alternateLink && (
-                      <a
-                        href={announcement.alternateLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm"
-                      >
-                        Open
-                      </a>
-                    )}
-                  </div>
-
-                  <p className="text-gray-200 whitespace-pre-line">
-                    {getAnnouncementPreview(announcement.text)}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </main>
   );
 }
