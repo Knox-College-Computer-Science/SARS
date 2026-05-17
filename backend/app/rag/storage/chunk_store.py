@@ -1,7 +1,5 @@
 """
-
 Stores ContextChunks and ParentChunks in per-course JSON files.
-
 """
 
 import json
