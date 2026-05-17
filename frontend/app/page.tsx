@@ -68,6 +68,17 @@ function formatAnnouncementDate(date: Date) {
   });
 }
 
+function getDaysAgo(date: Date) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const postedDate = new Date(date);
+  postedDate.setHours(0, 0, 0, 0);
+
+  const diffMs = today.getTime() - postedDate.getTime();
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+}
+
 function getAnnouncementPreview(text: string, maxLength = 140) {
   const cleanText = text.replace(/\s+/g, " ").trim();
 
@@ -283,6 +294,7 @@ export default function Home() {
               <div className="space-y-4">
                 {announcements.map((announcement) => {
                   const announcementDate = getAnnouncementDate(announcement);
+                  const daysAgo = getDaysAgo(announcementDate);
 
                   return (
                     <div
@@ -299,16 +311,24 @@ export default function Home() {
                           </p>
                         </div>
 
-                        {announcement.alternateLink && (
-                          <a
-                            href={announcement.alternateLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm"
-                          >
-                            Open
-                          </a>
-                        )}
+
+
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="px-3 py-1 rounded-full bg-purple-400 text-black text-sm font-semibold">
+                            {daysAgo === 0 ? "Today" : `${daysAgo}d ago`}
+                          </span>
+
+                          {announcement.alternateLink && (
+                            <a
+                              href={announcement.alternateLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm"
+                            >
+                              Open
+                            </a>
+                          )}
+                        </div>
                       </div>
 
                       <p className="text-gray-200 text-sm leading-relaxed">

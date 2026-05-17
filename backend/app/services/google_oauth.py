@@ -106,6 +106,7 @@ def get_all_announcements_for_courses(access_token: str, courses: list) -> list:
                         "text": announcement.get("text"),
                         "creationTime": announcement.get("creationTime"),
                         "updateTime": announcement.get("updateTime"),
+                        "alternateLink" : announcement.get("alternateLink"),
                     }
                 )
         except Exception:
