@@ -19,6 +19,16 @@ type ClassroomAssignment = {
   alternateLink?: string;
 };
 
+type ClassroomAnnouncement = {
+  id: string;
+  courseId: string;
+  courseName: string;
+  text: string;
+  creationTime: string;
+  updateTime?: string;
+  alternateLink?: string;
+};
+
 function getDueDate(assignment: ClassroomAssignment) {
   if (!assignment.dueDate) return null;
 
@@ -40,13 +50,40 @@ function getDaysLeft(dueDate: Date) {
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 }
 
+function getAnnouncementDate(announcement: ClassroomAnnouncement) {
+  return new Date(announcement.updateTime || announcement.creationTime);
+}
+
+function isWithinPastDays(date: Date, days: number) {
+  const now = new Date();
+  const cutoff = new Date();
+  cutoff.setDate(now.getDate() - days);
+
+  return date >= cutoff && date <= now;
+}
+
+function formatAnnouncementDate(date: Date) {
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function getAnnouncementPreview(text: string, maxLength = 160) {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength).trim() + "...";
+}
+
 export default function Home() {
   const [assignments, setAssignments] = useState<ClassroomAssignment[]>([]);
+  const [announcements, setAnnouncements] = useState<ClassroomAnnouncement[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(true);
   const [isConnected, setIsConnected] = useState(true);
 
   useEffect(() => {
     fetchDueSoonAssignments();
+    fetchRecentAnnouncements();
   }, []);
 
   const fetchDueSoonAssignments = async () => {
@@ -91,6 +128,49 @@ export default function Home() {
       setAssignments([]);
     } finally {
       setLoadingAssignments(false);
+    }
+  };
+
+  const fetchRecentAnnouncements = async () => {
+    setLoadingAnnouncements(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/classroom/announcements", {
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        setIsConnected(false);
+        setAnnouncements([]);
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch announcements");
+      }
+
+      const data = await res.json();
+      const allAnnouncements: ClassroomAnnouncement[] = data.announcements || [];
+
+      const recentAnnouncements = allAnnouncements
+        .filter((announcement) => {
+          const announcementDate = getAnnouncementDate(announcement);
+          return isWithinPastDays(announcementDate, 7);
+        })
+        .sort((a, b) => {
+          const dateA = getAnnouncementDate(a).getTime();
+          const dateB = getAnnouncementDate(b).getTime();
+          return dateB - dateA;
+        })
+        .slice(0, 5);
+
+      setAnnouncements(recentAnnouncements);
+      setIsConnected(true);
+    } catch (err) {
+      console.error("Failed to fetch recent announcements:", err);
+      setAnnouncements([]);
+    } finally {
+      setLoadingAnnouncements(false);
     }
   };
 
@@ -174,6 +254,75 @@ export default function Home() {
       </section>
 
       <ChatBox />
+      <section className="max-w-3xl mx-auto mb-10">
+        <h1 className="text-3xl font-bold mb-6">📢 Recent Announcements</h1>
+
+        {!isConnected && (
+          <div className="bg-[#444654] rounded-xl p-6">
+            <h2 className="text-xl font-semibold mb-2">
+              Connect Google Classroom
+            </h2>
+            <p className="text-gray-300 mb-4">
+              Connect Google Classroom to see recent class announcements.
+            </p>
+            <a
+              href="/connect"
+              className="inline-block bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg"
+            >
+              Go to Connect Page
+            </a>
+          </div>
+        )}
+
+        {isConnected && loadingAnnouncements && (
+          <p className="text-gray-400">Loading announcements...</p>
+        )}
+
+        {isConnected && !loadingAnnouncements && announcements.length === 0 && (
+          <p className="text-gray-400">No announcements from the past 7 days.</p>
+        )}
+
+        {isConnected && !loadingAnnouncements && announcements.length > 0 && (
+          <div className="space-y-4">
+            {announcements.map((announcement) => {
+              const announcementDate = getAnnouncementDate(announcement);
+
+              return (
+                <div
+                  key={announcement.id}
+                  className="bg-[#444654] rounded-xl p-5"
+                >
+                  <div className="flex items-start justify-between gap-4 mb-2">
+                    <div>
+                      <h2 className="text-lg font-semibold">
+                        {announcement.courseName}
+                      </h2>
+                      <p className="text-xs text-gray-400">
+                        {formatAnnouncementDate(announcementDate)}
+                      </p>
+                    </div>
+
+                    {announcement.alternateLink && (
+                      <a
+                        href={announcement.alternateLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm"
+                      >
+                        Open
+                      </a>
+                    )}
+                  </div>
+
+                  <p className="text-gray-200 whitespace-pre-line">
+                    {getAnnouncementPreview(announcement.text)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
