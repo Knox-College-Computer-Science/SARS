@@ -17,13 +17,23 @@ Requirements:
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import hashlib
+import logging
+import uuid
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterator, Optional
 
+import numpy as np
+
 import chromadb
+import ollama as ollama_client
+
+from unstructured.partition.pdf import partition_pdf
+
 import PyPDF2
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -35,10 +45,14 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 80
-TOP_K_RESULTS = 6
+SEMANTIC_THRESHOLD_PERCENTILE = 85
 
-OLLAMA_LLM_MODEL = "llama3.2"
-OLLAMA_EMBED_MODEL = "nomic-embed-text"
+TOP_K_RETRIEVAL = 20
+TOP_K_FINAL = 6
+
+LLM_MODEL = "llama3.2"
+IMAGE_MODEL = "llava"
+EMBED_MODEL = "nomic-embed-text"
 
 # Absolute path so ChromaDB works regardless of working directory
 CHROMA_PATH = str(Path(__file__).resolve().parent.parent.parent / "chroma_db")
@@ -69,16 +83,16 @@ def get_chroma_collection() -> chromadb.Collection:
 def get_embeddings() -> OllamaEmbeddings:
     global _embeddings
     if _embeddings is None:
-        _embeddings = OllamaEmbeddings(model=OLLAMA_EMBED_MODEL)
-        print(f"[RAG] Embeddings model ready: {OLLAMA_EMBED_MODEL}")
+        _embeddings = OllamaEmbeddings(model=EMBED_MODEL)
+        print(f"[RAG] Embeddings model ready: {EMBED_MODEL}")
     return _embeddings
 
 
 def get_llm() -> ChatOllama:
     global _llm
     if _llm is None:
-        _llm = ChatOllama(model=OLLAMA_LLM_MODEL)
-        print(f"[RAG] LLM ready: {OLLAMA_LLM_MODEL}")
+        _llm = ChatOllama(model=LLM_MODEL)
+        print(f"[RAG] LLM ready: {LLM_MODEL}")
     return _llm
 
 
@@ -187,7 +201,7 @@ def index_pdf(file_bytes: bytes, filename: str) -> dict:
     print(f"[RAG] {filename} → {len(chunks)} chunks")
 
     # Embed all chunks via Ollama in one batch request
-    print(f"[RAG] Embedding {len(chunks)} chunks with {OLLAMA_EMBED_MODEL}…")
+    print(f"[RAG] Embedding {len(chunks)} chunks with {EMBED_MODEL}…")
     embeddings = embed_texts(chunks)
 
     ids = [stable_doc_id(filename, i) for i in range(len(chunks))]
@@ -208,7 +222,7 @@ def index_pdf(file_bytes: bytes, filename: str) -> dict:
 # RETRIEVAL
 # ============================================================
 
-def retrieve(query: str, n_results: int = TOP_K_RESULTS) -> list[dict]:
+def retrieve(query: str, n_results: int = TOP_K_FINAL) -> list[dict]:
     """
     Embed the query and return the top-k most semantically similar chunks.
     Each result: { content, source, relevance_score }
