@@ -6,7 +6,7 @@ export default function Connect() {
   const [checkingConnection, setCheckingConnection] = useState(true);
 
   const handleGoogleConnect = () => {
-    window.location.href = "/api/auth/google/login";
+    window.location.href = "/api/auth/google/login";  // ✅ proxied to :8000
   };
 
   const handleGoogleDisconnect = async () => {
@@ -15,18 +15,13 @@ export default function Connect() {
         method: "POST",
         credentials: "include",
       });
-
-      if (!res.ok) {
-        throw new Error("Failed to disconnect Google Classroom");
-      }
-
+      if (!res.ok) throw new Error("Failed to disconnect");
       setGoogleConnected(false);
     } catch (err) {
       console.error("Failed to disconnect:", err);
       alert("Failed to disconnect Google Classroom.");
     }
   };
-  
 
   useEffect(() => {
     checkGoogleConnection();
@@ -36,13 +31,11 @@ export default function Connect() {
     setCheckingConnection(true);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-
     try {
-      const res = await fetch("/api/auth/google/me", {
+      const res = await fetch("/api/auth/google/me", {  // ✅ proxied to :8000
         credentials: "include",
         signal: controller.signal,
       });
-
       if (res.ok) {
         const data = await res.json();
         setGoogleConnected(Boolean(data.user && data.has_access_token));
@@ -50,9 +43,7 @@ export default function Connect() {
         setGoogleConnected(false);
       }
     } catch (err) {
-      if (err.name !== "AbortError") {
-        console.error("Failed to check Google connection:", err);
-      }
+      if (err.name !== "AbortError") console.error("Connection check failed:", err);
       setGoogleConnected(false);
     } finally {
       clearTimeout(timeout);
@@ -67,7 +58,6 @@ export default function Connect() {
         Connect to Google Classroom or Brightspace to sync your courses and assignments.
       </p>
 
-      {/* Google Classroom Card */}
       <div className="bg-[#444654] rounded-xl p-6 mb-6 shadow-lg">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -79,20 +69,10 @@ export default function Connect() {
               <p className="text-gray-400 text-sm">Sync courses and assignments</p>
             </div>
           </div>
-
-          {/* Status badge */}
-          <span
-            className={`text-xs px-3 py-1 rounded-full font-medium ${
-              googleConnected
-                ? "bg-green-500 text-white"
-                : "bg-gray-600 text-gray-300"
-            }`}
-          >
-            {checkingConnection
-              ? "Checking..."
-              : googleConnected
-                ? "✅ Connected"
-                : "Not connected"}
+          <span className={`text-xs px-3 py-1 rounded-full font-medium ${
+            googleConnected ? "bg-green-500 text-white" : "bg-gray-600 text-gray-300"
+          }`}>
+            {checkingConnection ? "Checking..." : googleConnected ? "✅ Connected" : "Not connected"}
           </span>
         </div>
 
@@ -106,7 +86,6 @@ export default function Connect() {
         ) : !checkingConnection && googleConnected ? (
           <div className="bg-[#343541] rounded-lg p-3 text-sm text-gray-300">
             Google Classroom is connected. Your courses will sync automatically.
-
             <button
               onClick={handleGoogleDisconnect}
               className="ml-4 text-red-400 hover:text-red-300 text-xs underline"
@@ -117,8 +96,6 @@ export default function Connect() {
         ) : null}
       </div>
 
-
-      {/* Info note */}
       <p className="text-gray-500 text-xs mt-6 text-center">
         Google Classroom OAuth is active. Connected courses are synced from your current term.
       </p>
