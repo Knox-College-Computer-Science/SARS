@@ -1,4 +1,5 @@
 from urllib.parse import urlencode
+from datetime import date, datetime
 import secrets
 import requests
 
@@ -131,6 +132,107 @@ def format_due_datetime(due_date: dict, due_time: dict) -> dict:
         "dueTime": due_time if due_time else None,
     }
 
+def parse_google_datetime(value: str):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def parse_google_due_date(due_date: dict):
+    if not due_date:
+        return None
+
+    try:
+        return date(
+            int(due_date["year"]),
+            int(due_date["month"]),
+            int(due_date["day"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def date_is_in_term(check_date, term_start: date, term_end: date) -> bool:
+    return check_date is not None and term_start <= check_date <= term_end
+
+
+def announcement_has_current_term_activity(
+    announcement: dict,
+    term_start: date,
+    term_end: date,
+) -> bool:
+    creation_date = parse_google_datetime(announcement.get("creationTime"))
+    update_date = parse_google_datetime(announcement.get("updateTime"))
+
+    return (
+        date_is_in_term(creation_date, term_start, term_end)
+        or date_is_in_term(update_date, term_start, term_end)
+    )
+
+
+def assignment_has_current_term_activity(
+    assignment: dict,
+    term_start: date,
+    term_end: date,
+) -> bool:
+    creation_date = parse_google_datetime(assignment.get("creationTime"))
+    update_date = parse_google_datetime(assignment.get("updateTime"))
+    due_date = parse_google_due_date(assignment.get("dueDate"))
+
+    return (
+        date_is_in_term(creation_date, term_start, term_end)
+        or date_is_in_term(update_date, term_start, term_end)
+        or date_is_in_term(due_date, term_start, term_end)
+    )
+
+
+def course_has_current_term_activity(
+    access_token: str,
+    course_id: str,
+    term_start: date,
+    term_end: date,
+) -> bool:
+    try:
+        announcements_data = get_course_announcements(access_token, course_id)
+        announcements = announcements_data.get("announcements", [])
+
+        for announcement in announcements:
+            if announcement_has_current_term_activity(
+                announcement,
+                term_start,
+                term_end,
+            ):
+                return True
+
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            raise
+    except Exception:
+        pass
+
+    try:
+        coursework_data = get_course_coursework(access_token, course_id)
+        assignments = coursework_data.get("courseWork", [])
+
+        for assignment in assignments:
+            if assignment_has_current_term_activity(
+                assignment,
+                term_start,
+                term_end,
+            ):
+                return True
+
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            raise
+    except Exception:
+        pass
+
+    return False
 
 def get_all_assignments_for_courses(access_token: str, courses: list) -> list:
     all_assignments = []
