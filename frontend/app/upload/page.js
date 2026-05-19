@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import UploadBox from "../components/UploadBox";
+import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 
 export default function UploadPage() {
   const [isConnected, setIsConnected] = useState(false);
@@ -39,14 +40,12 @@ export default function UploadPage() {
     }
   };
 
-  const goToConnectPage = () => {
-    window.location.href = "/connect";
-  };
-
   if (checkingConnection) {
     return (
-      <div className="p-6 text-white">
-        <p className="text-gray-400">Checking Google Classroom connection...</p>
+      <div className="min-h-[70vh] flex items-center justify-center px-8 text-white">
+        <div className="w-full max-w-2xl min-h-[220px] bg-[#444654] rounded-xl p-8 shadow-lg flex items-center justify-center">
+          <p className="text-gray-300">Checking Google Classroom connection...</p>
+        </div>
       </div>
     );
   }
@@ -54,24 +53,14 @@ export default function UploadPage() {
   if (!isConnected) {
     return (
       <div className="p-6 text-white">
-        <h1 className="text-2xl font-semibold mb-4">📤 Upload Notes</h1>
+        <h1 className="text-4xl font-bold text-center mb-10">
+          📤 Upload Notes
+        </h1>
 
-        <div className="bg-[#2f3342] border border-gray-600 rounded-lg p-6 max-w-xl">
-          <h2 className="text-xl font-semibold mb-2">
-            Connect Google Classroom
-          </h2>
-
-          <p className="text-gray-300 mb-4">
-            Connect to Google Classroom before uploading notes so your notes can
-            be linked to your current classes.
-          </p>
-
-          <button
-            onClick={goToConnectPage}
-            className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            Go to Connect Page
-          </button>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <ConnectGoogleClassroomCard
+            message="Connect Google Classroom before uploading notes so your notes can be linked to your current classes."
+          />
         </div>
       </div>
     );
