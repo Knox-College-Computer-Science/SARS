@@ -6,7 +6,7 @@ export default function Connect() {
   const [checkingConnection, setCheckingConnection] = useState(true);
 
   const handleGoogleConnect = () => {
-    window.location.href = "/api/auth/google/login";  // ✅ proxied to :8000
+    window.location.href = "/api/auth/google/login"; 
   };
 
   const handleGoogleDisconnect = async () => {
@@ -32,7 +32,7 @@ export default function Connect() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch("/api/auth/google/me", {  // ✅ proxied to :8000
+      const res = await fetch("/api/auth/google/me", { 
         credentials: "include",
         signal: controller.signal,
       });
