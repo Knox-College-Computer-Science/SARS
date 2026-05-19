@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import ConnectGoogleClassroomCard from "./components/ConnectGoogleClassroomCard";
 
 type ClassroomAssignment = {
   id: string;
@@ -198,21 +199,11 @@ export default function Home() {
 
       {/* Disconnected state */}
       {!isConnected ? (
-        <section className="bg-[#444654] rounded-2xl p-8 max-w-2xl mx-auto">
-          <h2 className="text-2xl font-semibold mb-3">
-            Connect Google Classroom
-          </h2>
-          <p className="text-gray-300 mb-5">
-            Connect Google Classroom to see assignments due soon and recent
-            announcements from your current classes.
-          </p>
-          <a
-            href="/connect"
-            className="inline-block bg-green-500 hover:bg-green-600 px-5 py-2 rounded-lg font-medium"
-          >
-            Go to Connect Page
-          </a>
-        </section>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <ConnectGoogleClassroomCard
+            message="Connect Google Classroom to see assignments due soon and recent announcements from your current classes."
+          />
+        </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {/* Due Soon Assignments */}
