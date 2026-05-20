@@ -13,6 +13,7 @@ from app.routes.notes import router as notes_router
 from app.routes.rag import router as rag_router
 
 from database import engine, Base, init_db
+import socketio
 from socket_manager import sio
 
 # Create all DB tables and seed demo data on startup
