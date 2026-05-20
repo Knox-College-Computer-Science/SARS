@@ -27,6 +27,7 @@ def _get_conn():
             drive_view_link TEXT
         )
     """)
+
     for col, col_type in [
         ("uploaded_by",     "TEXT"),
         ("drive_file_id",   "TEXT"),
@@ -37,6 +38,7 @@ def _get_conn():
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
     conn.commit()
     return conn
 
@@ -55,25 +57,36 @@ async def upload_note(
     drive_file_id = None
     drive_view_link = None
 
+    # ── Try Google Drive upload if user is logged in ──
     if access_token:
         try:
-            from app.services.google_oauth import upload_file_to_drive
+            from app.services.google_oauth import (
+                get_or_create_sars_folder,
+                upload_file_to_drive,
+            )
+
+            folder_id = get_or_create_sars_folder(access_token=access_token)
+
             drive_result = upload_file_to_drive(
                 access_token=access_token,
                 file_bytes=file_bytes,
                 filename=file.filename,
                 subject=subject,
+                folder_id=folder_id,
             )
             drive_file_id   = drive_result["drive_file_id"]
             drive_view_link = drive_result["drive_view_link"]
+
         except Exception as e:
             print(f"[Drive] Upload failed, falling back to local: {e}")
 
+    # ── Fall back to local storage if Drive upload failed / not logged in ──
     if not drive_file_id:
         dest = UPLOAD_DIR / file.filename
         with dest.open("wb") as buf:
             buf.write(file_bytes)
 
+    # ── Save to DB ──
     conn = _get_conn()
     conn.execute(
         "INSERT INTO notes (filename, subject, uploaded_by, drive_file_id, drive_view_link) VALUES (?, ?, ?, ?, ?)",
@@ -82,6 +95,7 @@ async def upload_note(
     conn.commit()
     conn.close()
 
+    # ── RAG indexing ──
     rag_indexed = False
     if file.filename.lower().endswith(".pdf"):
         try:

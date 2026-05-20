@@ -19,7 +19,7 @@ export default function UploadBox() {
     setLoadingCourses(true);
 
     try {
-      const res = await fetch("http://localhost:8000/classroom/courses", {
+      const res = await fetch("/api/classroom/courses", {
         credentials: "include",
       });
 
@@ -53,11 +53,11 @@ export default function UploadBox() {
     setLastResult(null);
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", file);   // uploads exactly what the user picked
     formData.append("subject", subject);
 
     try {
-      const res = await fetch("http://localhost:8000/upload", {
+      const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
         credentials: "include",
@@ -124,6 +124,7 @@ export default function UploadBox() {
           }}
         />
 
+        {/* PDF Preview — view only, edits here are NOT saved */}
         {previewUrl && (
           <div className="mb-5 rounded-lg overflow-hidden border border-gray-600">
             <div className="flex items-center justify-between px-3 py-2 bg-[#343541] border-b border-gray-600">
@@ -135,6 +136,7 @@ export default function UploadBox() {
                 ✕ Remove
               </button>
             </div>
+            {/* Warning banner */}
             <div className="bg-yellow-900/40 border-b border-yellow-700 px-3 py-2 flex items-start gap-2">
               <span className="text-yellow-400 text-xs mt-0.5">⚠️</span>
               <p className="text-yellow-300 text-xs leading-snug">
@@ -151,8 +153,7 @@ export default function UploadBox() {
           </div>
         )}
 
-        {/* Subject dropdown */}
-        <label className="block text-gray-400 text-sm mb-1">Select Class</label>
+        <label className="block text-gray-400 text-sm mb-1">Select Subject</label>
         <select
           value={subject}
           onChange={(e) => setSubject(e.target.value)}

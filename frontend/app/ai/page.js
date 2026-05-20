@@ -252,30 +252,24 @@ export default function AIPage() {
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26]">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
-        
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
         * {
           font-family: 'Inter', sans-serif;
         }
-        
         .tab-active {
           color: #f8f9fa;
           border-bottom: 2px solid #5865f2;
         }
-        
         .tab-inactive {
           color: #949ba4;
           transition: all 0.3s ease;
         }
-        
         .tab-inactive:hover {
           color: #dbdee1;
         }
-        
         .message-enter {
           animation: slideIn 0.3s ease-out;
         }
-        
         @keyframes slideIn {
           from {
             opacity: 0;
@@ -286,25 +280,20 @@ export default function AIPage() {
             transform: translateY(0);
           }
         }
-        
         .pulse-subtle {
           animation: pulseSoft 2s ease-in-out infinite;
         }
-        
         @keyframes pulseSoft {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
         }
-        
         .discord-button {
           background: #5865f2;
         }
-        
         .discord-button:hover {
           background: #4752c4;
         }
       `}</style>
-
       {/* Header */}
       <div className="border-b border-[#2c2f33] bg-[#2c2f33]/30 backdrop-blur-sm sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 py-4">

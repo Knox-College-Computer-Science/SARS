@@ -16,7 +16,7 @@ export default function UploadPage() {
     setCheckingConnection(true);
 
     try {
-      const res = await fetch("http://localhost:8000/auth/google/me", {
+      const res = await fetch("/api/auth/google/me", {
         credentials: "include",
       });
 
