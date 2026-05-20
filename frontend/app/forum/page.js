@@ -35,7 +35,7 @@ export default function ForumPage() {
 
         let googleConnected = false;
         try {
-          const meRes = await fetch("http://localhost:8000/auth/google/me", { credentials: "include" });
+          const meRes = await fetch("/api/auth/google/me", { credentials: "include" });
           googleConnected = meRes.ok;
         } catch {}
 

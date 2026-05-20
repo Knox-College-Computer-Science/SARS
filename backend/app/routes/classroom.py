@@ -6,7 +6,6 @@ from app.services.google_oauth import get_all_assignments_for_courses
 from app.services.google_oauth import get_all_materials_for_courses
 from app.services.google_oauth import course_has_current_term_activity
 from app.services.google_oauth import get_classroom_courses
-from app.services.knox_calendar import get_current_knox_term
 from app.services.knox_calendar import get_current_knox_term_info
 
 import requests

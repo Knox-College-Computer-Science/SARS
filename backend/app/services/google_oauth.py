@@ -65,13 +65,31 @@ def get_user_info(access_token: str) -> dict:
 
 def get_classroom_courses(access_token: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
-    response = requests.get(
-        "https://classroom.googleapis.com/v1/courses",
-        headers=headers,
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    all_courses = []
+    page_token = None
+
+    while True:
+        params = {
+            "pageSize": 50,
+            "courseStates": ["ACTIVE", "ARCHIVED"],
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(
+            "https://classroom.googleapis.com/v1/courses",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        all_courses.extend(data.get("courses", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return {"courses": all_courses}
 
 def get_course_announcements(access_token: str, course_id: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -342,9 +360,52 @@ def get_all_materials_for_courses(access_token: str, courses: list) -> list:
 
     return all_courses_materials
 
+def get_or_create_sars_folder(access_token: str) -> str:
+    """
+    Returns the Drive folder ID for 'SARS App Notes'.
+    Creates the folder if it doesn't exist yet.
+    """
+    from googleapiclient.discovery import build
+    from google.oauth2.credentials import Credentials
 
-def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, subject: str) -> dict:
+    creds = Credentials(token=access_token)
+    service = build("drive", "v3", credentials=creds)
+
+    FOLDER_NAME = "SARS App Notes"
+
+    # Check if folder already exists so we don't create duplicates
+    results = service.files().list(
+        q=f"name='{FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+        fields="files(id, name)",
+        spaces="drive",
+    ).execute()
+
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]  # Folder already exists, reuse it
+
+    # Create the folder
+    folder_metadata = {
+        "name": FOLDER_NAME,
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+    folder = service.files().create(
+        body=folder_metadata,
+        fields="id",
+    ).execute()
+
+    return folder["id"]
+
+
+def upload_file_to_drive(
+    access_token: str,
+    file_bytes: bytes,
+    filename: str,
+    subject: str,
+    folder_id: str = None,       # ← new param
+) -> dict:
     import io
+    import mimetypes
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
     from google.oauth2.credentials import Credentials
@@ -357,7 +418,13 @@ def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, su
         "description": f"Class notes - {subject}",
     }
 
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/pdf")
+    # Place inside the SARS folder if we have one
+    if folder_id:
+        file_metadata["parents"] = [folder_id]
+
+    # Detect mimetype instead of hardcoding PDF
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime)
 
     uploaded = service.files().create(
         body=file_metadata,
@@ -365,6 +432,7 @@ def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, su
         fields="id, name, webViewLink",
     ).execute()
 
+    # Make viewable by anyone with the link
     service.permissions().create(
         fileId=uploaded["id"],
         body={"type": "anyone", "role": "reader"},
