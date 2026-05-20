@@ -24,7 +24,17 @@ export default function Connect() {
   };
 
   useEffect(() => {
-    checkGoogleConnection();
+    const params = new URLSearchParams(window.location.search);
+    const sessionToken = params.get("session_token");
+    if (sessionToken) {
+      fetch(`/api/auth/session/restore?token=${sessionToken}`, { credentials: "include" })
+        .finally(() => {
+          window.history.replaceState({}, "", "/connect");
+          checkGoogleConnection();
+        });
+    } else {
+      checkGoogleConnection();
+    }
   }, []);
 
   const checkGoogleConnection = async () => {
