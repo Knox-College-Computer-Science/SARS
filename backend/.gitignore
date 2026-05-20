@@ -1,0 +1,19 @@
+# RAG Storage
+rag_storage/
+RAG_Uploads/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# ChromaDB
+*.bin
+*.sqlite3
+*.pickle
+chroma_db/
+chunk_store/
+eval_logs/
