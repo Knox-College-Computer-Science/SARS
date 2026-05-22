@@ -1,66 +1,63 @@
-from pathlib import Path
-from fastapi import UploadFile
 import uuid
+from fastapi import UploadFile
 
-from app.rag import pipeline  # ← CHANGE THIS (was: from app.rag.rag_pipeline)
+from app.rag import pipeline
+from app.rag import config as rag_config
 
-UPLOAD_FOLDER = Path(__file__).resolve().parent.parent.parent / "RAG_Uploads"
 
+async def save_uploaded_file(
+    file: UploadFile,
+    course_id: str,
+    use_ocr: bool = False,
+) -> dict:
+    file_bytes = await file.read()   # async read — non-blocking
+    file_id    = str(uuid.uuid4())
 
-async def save_uploaded_file(file: UploadFile, course_id: str):  # ← ADD course_id
-    """Save and index a PDF file for a specific course."""
-    UPLOAD_FOLDER.mkdir(exist_ok=True)
-    file_path = UPLOAD_FOLDER / file.filename
-    file_bytes = await file.read()  # ← Make it async
+    original_strategy = rag_config.EXTRACTION_STRATEGY
+    if use_ocr:
+        rag_config.EXTRACTION_STRATEGY = "hi_res"
 
-    # Save to disk
-    with open(file_path, "wb") as buffer:
-        buffer.write(file_bytes)
-
-    # Index using new pipeline with course_id
-    file_id = str(uuid.uuid4())
-    index_result = pipeline.index_document(
-        file_bytes=file_bytes,
-        filename=file.filename,
-        course_id=course_id,  # ← NEW
-        user_id="current_user",  # ← NEW (get from auth later)
-        file_id=file_id,  # ← NEW
-    )
+    try:
+        index_result = pipeline.index_document(
+            file_bytes = file_bytes,
+            filename   = file.filename,
+            course_id  = course_id,
+            user_id    = "current_user",   # Replace with actual user from auth
+            file_id    = file_id,
+        )
+    finally:
+        rag_config.EXTRACTION_STRATEGY = original_strategy
 
     return {
-        "file_path": str(file_path),
         "file_name": file.filename,
-        "file_id": file_id,  # ← NEW
+        "file_id":   file_id,
         "index_result": {
-            "status": index_result.status,
+            "status":           index_result.status,
             "retrieval_chunks": index_result.retrieval_chunks,
-            "parent_chunks": index_result.parent_chunks,
-            "error": index_result.error,
+            "parent_chunks":    index_result.parent_chunks,
+            "text_chunks":      index_result.text_chunks,
+            "table_chunks":     index_result.table_chunks,
+            "image_chunks":     index_result.image_chunks,
+            "error":            index_result.error,
         },
     }
 
 
-def get_chat_answer(question: str, course_id: str, conversation_history: list = None):  # ← ADD course_id, history
-    """Non-streaming chat answer (for testing/simple endpoints)."""
-    if conversation_history is None:
-        conversation_history = []
-
-    return pipeline.answer_question(question, course_id, conversation_history)  # ← PASS all params
+def stream_chat_answer(question: str, course_id: str, conversation_history: list = None):
+    return pipeline.stream_answer(question, course_id, conversation_history or [])
 
 
-def stream_chat_answer(question: str, course_id: str, conversation_history: list = None):  # ← ADD THIS NEW FUNCTION
-    """Streaming chat answer (SSE events)."""
-    if conversation_history is None:
-        conversation_history = []
-
-    return pipeline.stream_answer(question, course_id, conversation_history)
+def get_chat_answer(question: str, course_id: str, conversation_history: list = None) -> dict:
+    return pipeline.answer_question(question, course_id, conversation_history or [])
 
 
-def list_course_files(course_id: str):  # ← ADD THIS NEW FUNCTION
-    """List all indexed files for a course."""
+def list_course_files(course_id: str) -> list:
     return pipeline.list_course_files(course_id)
 
 
-def delete_course_file(course_id: str, file_id: str):  # ← ADD THIS NEW FUNCTION
-    """Delete a file and all its chunks."""
+def delete_course_file(course_id: str, file_id: str) -> int:
     return pipeline.delete_course_file(course_id, file_id)
+
+
+def get_file_status(file_id: str) -> dict:
+    return pipeline.get_document_status(file_id)

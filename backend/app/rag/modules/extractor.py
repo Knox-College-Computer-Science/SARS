@@ -1,12 +1,15 @@
+from typing import List, Tuple
+
 import io
 import re
+import hashlib
 import logging
 import unicodedata
 
-from app.rag.config import VISION_MODEL
+from app.rag.config import VISION_MODEL, EXTRACT_IMAGES, EXTRACTION_STRATEGY
 from app.rag.models import ExtractedElement
 
-logger = logging.getLogger("nexus.rag.extractor")
+logger = logging.getLogger("sars.rag.extractor")
 
 # Element categories from unstructured that we treat as narrative text
 _TEXT_CATEGORIES = {
@@ -20,27 +23,29 @@ _TEXT_CATEGORIES = {
 _SKIP_CATEGORIES = {"Header", "Footer", "PageBreak"}
 
 
-def extract_elements(file_bytes: bytes, filename: str) -> list[ExtractedElement]:
-    """
-    Parse a PDF into typed ExtractedElement objects.
+def compute_md5(file_bytes: bytes) -> str:
+    """Return MD5 hex digest of file bytes. Used for duplicate detection."""
+    return hashlib.md5(file_bytes).hexdigest()
 
-    """
+
+def extract_elements(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
+
     from unstructured.partition.pdf import partition_pdf
 
-    logger.info(f"Extracting: {filename}")
+    logger.info(f"Extracting: {filename} (strategy={EXTRACTION_STRATEGY}, images={EXTRACT_IMAGES})")
 
     try:
         raw_elements = partition_pdf(
             file=io.BytesIO(file_bytes),
-            strategy="fast",
+            strategy=EXTRACTION_STRATEGY,          # "fast" or "hi_res" (OCR)
             include_page_breaks=True,
-            # extract_images_in_pdf=True,  # Enable when LLaVA is stable
+            extract_images_in_pdf=EXTRACT_IMAGES,  # controlled by config
         )
     except Exception as e:
         logger.error(f"PDF extraction failed for {filename}: {e}")
         raise ValueError(f"Could not parse {filename}: {e}")
 
-    extracted: list[ExtractedElement] = []
+    extracted: List[ExtractedElement] = []
     current_section = ""   # Tracks the most recent Title element
 
     for elem in raw_elements:
@@ -55,9 +60,7 @@ def extract_elements(file_bytes: bytes, filename: str) -> list[ExtractedElement]
             continue
 
         if category == "Title":
-            # Update running section heading
             current_section = text
-            # Titles are indexed too — they often contain key terminology
             extracted.append(ExtractedElement(
                 element_type    = "title",
                 text            = text,
@@ -66,34 +69,33 @@ def extract_elements(file_bytes: bytes, filename: str) -> list[ExtractedElement]
             ))
 
         elif category == "Table":
-            # Build a markdown representation from the HTML unstructured provides
             html = getattr(elem.metadata, "text_as_html", "") or ""
-            formatted = _html_table_to_markdown(html) if html else text
+            formatted   = _html_table_to_markdown(html) if html else text
+            linearized  = _linearize_table(html) if html else text
 
             extracted.append(ExtractedElement(
                 element_type      = "table",
-                text              = text,        # Flat text for embedding
+                text              = linearized,
                 page_number       = page_num,
                 section_heading   = current_section,
-                formatted_content = formatted,   # Markdown for LLM
+                formatted_content = formatted,
             ))
 
         elif category == "Image":
-            # Attempt LLaVA captioning; fall back gracefully if unavailable
-            image_b64 = getattr(elem.metadata, "image_base64", None)
-            if image_b64:
-                caption = _caption_image_safe(image_b64, filename, page_num)
-                if caption:
-                    extracted.append(ExtractedElement(
-                        element_type    = "image",
-                        text            = caption,   # Caption becomes the searchable text
-                        page_number     = page_num,
-                        section_heading = current_section,
-                    ))
-            # If no image data or captioning failed, skip silently
+            if EXTRACT_IMAGES:
+                image_b64 = getattr(elem.metadata, "image_base64", None)
+                if image_b64:
+                    caption = _caption_image_safe(image_b64, filename, page_num)
+                    if caption:
+                        extracted.append(ExtractedElement(
+                            element_type    = "image",
+                            text            = caption,
+                            page_number     = page_num,
+                            section_heading = current_section,
+                        ))
 
         elif category in _TEXT_CATEGORIES:
-            if len(text) < 10:  # Skip tiny fragments
+            if len(text) < 10:
                 continue
             extracted.append(ExtractedElement(
                 element_type    = "text",
@@ -103,7 +105,6 @@ def extract_elements(file_bytes: bytes, filename: str) -> list[ExtractedElement]
             ))
 
         else:
-            # Catch-all: index as text if substantial
             if len(text) > 40:
                 extracted.append(ExtractedElement(
                     element_type    = "text",
@@ -122,7 +123,18 @@ def extract_elements(file_bytes: bytes, filename: str) -> list[ExtractedElement]
     return extracted
 
 
-# ── Helpers ─────────────────────────────────────────────────────
+def detect_document_type(elements: List[ExtractedElement]) -> str:
+
+    if not elements:
+        return "unstructured"
+    title_count = sum(1 for e in elements if e.element_type == "title")
+    ratio = title_count / len(elements)
+    doc_type = "structured" if ratio > 0.12 else "unstructured"
+    logger.debug(f"Document type detected: {doc_type} (title ratio={ratio:.2f})")
+    return doc_type
+
+
+# ── Private helpers ──────────────────────────────────────────────
 
 def _clean_text(text: str) -> str:
 
@@ -154,39 +166,80 @@ def _html_table_to_markdown(html: str) -> str:
 
         return "\n".join(lines)
     except Exception:
-        return html   # Fallback: return raw HTML
+        return html
 
 
-def _caption_image_safe(
-    image_b64: str, filename: str, page: int
-) -> str:
-    """
-    Caption an image using LLaVA via Ollama.
-.
-    """
+def _linearize_table(html: str) -> str:
+
     try:
-        import base64
-        import ollama as _ollama
+        # Extract all rows
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL)
+        if not rows:
+            return _html_table_to_markdown(html)
 
-        image_bytes = base64.b64decode(image_b64)
-        response = _ollama.generate(
-            model=VISION_MODEL,
-            prompt=(
-                "Describe this image from an academic document. "
-                "Include any text, labels, axes, data values, or diagrams. "
-                "Be factual and concise."
-            ),
-            images=[image_bytes],
-        )
-        caption = response.get("response", "").strip()
-        if caption:
-            logger.debug(
-                f"Captioned image p.{page} of {filename}: {caption[:60]}…"
+        # Parse header row
+        header_cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", rows[0], re.DOTALL)
+        headers = [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
+
+        lines = []
+        for row_idx, row in enumerate(rows[1:], 1):
+            cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL)
+            cell_texts = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
+
+            row_label = cell_texts[0] if cell_texts else f"Row {row_idx}"
+
+            pairs = []
+            for col_idx, cell in enumerate(cell_texts[1:], 1):
+                if cell and col_idx < len(headers):
+                    pairs.append(f"{headers[col_idx]}={cell}")
+
+            if pairs:
+                lines.append(f"Row {row_idx} ({row_label}): {' | '.join(pairs)}")
+
+        return "\n".join(lines) if lines else _html_table_to_markdown(html)
+
+    except Exception:
+        return _html_table_to_markdown(html)
+
+
+def _caption_image_safe(image_b64: str, filename: str, page: int) -> str:
+    """
+    Caption an image using LLaVA via Ollama..
+
+    Retries up to 3 times with exponential backoff before giving up.
+    """
+    import time
+    import base64
+    import ollama as _ollama
+
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            image_bytes = base64.b64decode(image_b64)
+            response = _ollama.generate(
+                model=VISION_MODEL,
+                prompt=(
+                    "Describe this image from an academic document. "
+                    "Include any text, labels, axes, data values, or diagrams. "
+                    "Be factual and concise."
+                ),
+                images=[image_bytes],
             )
-        return caption
-    except Exception as e:
-        logger.warning(
-            f"Image captioning skipped (p.{page} of {filename}): {e}. "
-            f"Pull llava with: ollama pull llava"
-        )
-        return ""
+            caption = response.get("response", "").strip()
+            if caption:
+                logger.debug(f"Captioned image p.{page} of {filename}: {caption[:60]}…")
+            return caption
+
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                wait = 2 ** attempt  # 1s, 2s
+                logger.warning(f"Image captioning attempt {attempt+1} failed, retrying in {wait}s: {e}")
+                time.sleep(wait)
+            else:
+                logger.warning(
+                    f"Image captioning skipped (p.{page} of {filename}) after {max_attempts} attempts: {e}. "
+                    f"Pull llava with: ollama pull llava"
+                )
+                return ""
+
+    return ""

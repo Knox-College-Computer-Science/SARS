@@ -1,24 +1,20 @@
 
 import logging
-from typing import Optional
+from typing import List
 
 from app.rag.config import MEMORY_WINDOW
 from app.rag.models import RetrievedResult
 
-logger = logging.getLogger("nexus.rag.prompt_builder")
-
-# If a context chunk is shorter than this, use the parent text instead.
-# Parent text is richer but may contain off-topic content from the section.
-_SHORT_CHUNK_THRESHOLD = 150  # chars
+logger = logging.getLogger("sars.rag.prompt_builder")
 
 SYSTEM_PROMPT = """\
-You are Nexus AI, a course assistant embedded in a student's course hub.
+You are SARS AI, a course assistant embedded in a student's course hub.
 You answer questions STRICTLY using the retrieved course materials provided below.
 
 Rules:
 1. Ground every factual claim in the provided sources.
 2. Cite sources inline using [1], [2], etc. immediately after the claim.
-3. If a source is a table, interpret the data accurately and cite the table number.
+3. If a source is a table, read it carefully row by row to find the exact answer.
 4. If a source is an image description, note you are referring to a visual.
 5. If the answer cannot be found in the provided materials, say clearly:
    "I couldn't find that in the uploaded course materials."
@@ -30,63 +26,51 @@ Rules:
 
 def build_prompt(
     query:                str,
-    results:              list[RetrievedResult],
-    conversation_history: list[dict],
-) -> list[dict]:
+    results:              List[RetrievedResult],
+    conversation_history: List[dict],
+) -> List[dict]:
 
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # ── Conversation history (sliding window) ────────────────────
+    #  Conversation history (sliding window)
     for turn in conversation_history[-MEMORY_WINDOW:]:
         if turn.get("role") in ("user", "assistant") and turn.get("content"):
             messages.append({"role": turn["role"], "content": turn["content"]})
 
-    # ── Context block ────────────────────────────────────────────
-    context_lines: list[str] = ["## Retrieved Course Materials\n"]
+    #  Context block
+    context_lines: List[str] = ["## Retrieved Course Materials\n"]
 
     for i, result in enumerate(results, 1):
-        citation = result.citation_label
-        rc       = result.retrieval_chunk
+        rc     = result.retrieval_chunk
+        parent = result.parent_chunk
 
-        # Choose the content the LLM should read:
-        #  - For tables: use markdown (formatted_content)
-        #  - For short chunks: use parent text (richer context)
-        #  - Otherwise: use context chunk text (header + retrieval text)
+        # Build citation label from retrieval chunk metadata
+        section_part = f" — {rc.section_heading}" if rc.section_heading else ""
+        citation = f"{rc.source_filename}{section_part}, p.{rc.page_number} ({rc.element_type})"
+
+        # Build metadata header for LLM context
+        header_parts = [f"Source: {rc.source_filename}"]
+        if rc.section_heading:
+            header_parts.append(f"Section: {rc.section_heading}")
+        header_parts.append(f"Page: {rc.page_number}")
+        header_parts.append(f"Type: {rc.element_type}")
+        header = "[" + " | ".join(header_parts) + "]\n\n"
+
         if rc.element_type == "table" and rc.formatted_content:
-            content = _table_content(rc.formatted_content, citation)
-
-        elif (
-            result.context_chunk
-            and len(result.context_chunk.text) < _SHORT_CHUNK_THRESHOLD
-            and result.parent_chunk
-        ):
-            # Chunk is very short — send the full parent section instead
-            content = result.parent_chunk.text
-            logger.debug(f"Using parent text for short chunk [{i}]")
-
-        elif result.context_chunk:
-            content = result.context_chunk.text   # Header + chunk text
-
+            content = f"[Table from {citation}]\n\n{rc.formatted_content}"
+        elif parent:
+            content = header + parent.text
         else:
-            # Fallback: just the raw retrieval text
-            content = rc.text
+            content = header + rc.text
 
         context_lines.append(f"[{i}] ({citation})")
         context_lines.append(content)
-        context_lines.append("")   # Blank line between sources
+        context_lines.append("")
 
     context_block = "\n".join(context_lines)
 
-    # ── Final user message ───────────────────────────────────────
+    # Final user message
     user_message = f"{context_block}\n---\n\n**Question:** {query}"
     messages.append({"role": "user", "content": user_message})
 
     return messages
-
-
-def _table_content(markdown: str, citation: str) -> str:
-    """
-    Format a table for the LLM. Adds a note that this is a table
-    so the LLM treats it structurally rather than as prose.
-    """
-    return f"[This source is a data table from {citation}]\n\n{markdown}"
