@@ -121,18 +121,7 @@ def query_collection(
     query_embedding: list[float],
     n_results: int = TOP_K_VECTOR,
 ) -> list[dict]:
-    """
-    Vector search the course collection.
 
-    Returns a list of dicts, each representing one result:
-      {
-        "id":       chunk_id,
-        "document": chunk text,
-        "metadata": {...},
-        "distance": float,        # L2 distance (lower = more similar)
-        "score":    float,        # Converted similarity (higher = better)
-      }
-    """
     collection = get_course_collection(course_id)
     count = collection.count()
     if count == 0:
@@ -171,12 +160,7 @@ def query_collection(
 
 
 def get_all_documents(course_id: str) -> list[dict]:
-    """
-    Return all stored documents for a course.
-    Used by the BM25 retriever to build its index.
 
-    Returns list of {"id": ..., "document": ..., "metadata": ...}
-    """
     collection = get_course_collection(course_id)
     if collection.count() == 0:
         return []
