@@ -1,6 +1,6 @@
 /* Fills the <main> area provided by the root layout */
 .app {
-  flex: 1;
+  height: 100%;
   display: flex;
   min-height: 0;
   overflow: hidden;
