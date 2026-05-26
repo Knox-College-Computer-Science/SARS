@@ -103,7 +103,7 @@ export default function Home() {
     setLoadingAssignments(true);
 
     try {
-      const res = await fetch("http://localhost:8000/classroom/assignments", {
+      const res = await fetch("/api/classroom/assignments", {
         credentials: "include",
       });
 
@@ -148,7 +148,7 @@ export default function Home() {
     setLoadingAnnouncements(true);
 
     try {
-      const res = await fetch("http://localhost:8000/classroom/announcements", {
+      const res = await fetch("/api/classroom/announcements", {
         credentials: "include",
       });
 

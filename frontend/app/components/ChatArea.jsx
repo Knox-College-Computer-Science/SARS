@@ -98,8 +98,14 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
       .then(data => setMessages(data.messages))
       .catch(console.error);
 
-    socket.emit("join_channel", { channel_id: channelId });
-    return () => socket.emit("leave_channel", { channel_id: channelId });
+    const joinRoom = () => socket.emit("join_channel", { channel_id: channelId });
+    joinRoom();
+    socket.on("connect", joinRoom);
+
+    return () => {
+      socket.off("connect", joinRoom);
+      socket.emit("leave_channel", { channel_id: channelId });
+    };
   }, [channelId]);
 
   useEffect(() => {
@@ -184,7 +190,11 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
     setSending(true);
     try {
       const saved = await postChannelMessage(channelId, text, currentUser.id);
-      setMessages(prev => prev.map(m => m.id === tempId ? saved : m));
+      setMessages(prev => {
+        const mapped = prev.map(m => m.id === tempId ? saved : m);
+        const seen = new Set();
+        return mapped.filter(m => !seen.has(m.id) && seen.add(m.id));
+      });
     } catch (err) {
       console.error("Send failed:", err);
       setMessages(prev => prev.map(m => m.id === tempId ? { ...m, failed: true } : m));
