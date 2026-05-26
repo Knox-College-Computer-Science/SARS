@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import ChatSidebar from "../components/ChatSidebar";
 import ChatArea from "../components/ChatArea";
 import DMArea from "../components/DMArea";
+import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 import {
   schoolLaunch,
   syncClassroomCourses,
@@ -24,9 +25,10 @@ export default function ForumPage() {
   const [channels,      setChannels]      = useState([]);
   const [conversations, setConversations] = useState([]);
   const [activeView,    setActiveView]    = useState(null);
-  const [onlineUsers,   setOnlineUsers]   = useState(new Set());
-  const [loading,       setLoading]       = useState(true);
-  const [error,         setError]         = useState(null);
+  const [onlineUsers,      setOnlineUsers]      = useState(new Set());
+  const [loading,          setLoading]          = useState(true);
+  const [error,            setError]            = useState(null);
+  const [isGoogleConnected, setIsGoogleConnected] = useState(true);
 
   useEffect(() => {
     async function init() {
@@ -45,10 +47,9 @@ export default function ForumPage() {
           user = syncData.user;
           allCourses = syncData.courses ?? [];
         } else {
-          const auth = await schoolLaunch(COURSE_ID);
-          t = auth.token;
-          user = auth.user;
-          allCourses = auth.course ? [auth.course] : [];
+          setIsGoogleConnected(false);
+          setLoading(false);
+          return;
         }
 
         setCurrentUser(user);
@@ -150,6 +151,18 @@ export default function ForumPage() {
       console.error("Course switch failed:", err);
     }
   }, [token]);
+
+  if (!isGoogleConnected) {
+    return (
+      <div className={styles.app}>
+        <main className={`${styles.main} ${styles.connectMain}`}>
+          <ConnectGoogleClassroomCard
+            message="Connect Google Classroom to access course channels and direct messages with your classmates."
+          />
+        </main>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
