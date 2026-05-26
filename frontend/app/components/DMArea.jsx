@@ -178,7 +178,14 @@ export default function DMArea({ conversationId, recipient, currentUser }) {
           <span className={styles.channelName}>{recipient?.name ?? "Unknown"}</span>
           <span className={styles.memberCount}>· Direct message</span>
         </div>
-        {connected && <span className={styles.livePill}>● live</span>}
+        {connected && (
+          <span className={styles.livePill}>
+            <svg width="6" height="6" viewBox="0 0 6 6">
+              <circle cx="3" cy="3" r="3" fill="currentColor" />
+            </svg>
+            Live
+          </span>
+        )}
       </div>
 
       <div className={styles.feed}>
