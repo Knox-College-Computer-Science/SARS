@@ -138,3 +138,10 @@ export function postDM(conversationId, content, senderId) {
     body: JSON.stringify({ content, sender_id: senderId }),
   }).then(normaliseMessage);
 }
+
+export function reactToDM(conversationId, messageId, userId, emoji) {
+  return req(`/conversations/${conversationId}/messages/${messageId}/react`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, emoji }),
+  }).then(normaliseMessage);
+}

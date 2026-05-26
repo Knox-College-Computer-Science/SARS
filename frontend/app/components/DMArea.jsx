@@ -5,7 +5,7 @@ import Message from "./Message";
 import styles from "./ChatArea.module.css";
 import dmStyles from "./DMArea.module.css";
 import socket from "@/lib/socket";
-import { fetchDMMessages, postDM, normaliseMessage } from "@/lib/api";
+import { fetchDMMessages, postDM, normaliseMessage, reactToDM } from "@/lib/api";
 
 function SendIcon() {
   return (
@@ -59,8 +59,14 @@ export default function DMArea({ conversationId, recipient, currentUser }) {
       .then(data => setMessages(data.messages))
       .catch(console.error);
 
-    socket.emit("join_conversation", { conversation_id: conversationId });
-    return () => socket.emit("leave_conversation", { conversation_id: conversationId });
+    const joinRoom = () => socket.emit("join_conversation", { conversation_id: conversationId });
+    joinRoom();
+    socket.on("connect", joinRoom);
+
+    return () => {
+      socket.off("connect", joinRoom);
+      socket.emit("leave_conversation", { conversation_id: conversationId });
+    };
   }, [conversationId]);
 
   useEffect(() => {
@@ -68,6 +74,11 @@ export default function DMArea({ conversationId, recipient, currentUser }) {
       if (raw.conversation_id !== conversationId) return;
       const msg = normaliseMessage(raw);
       setMessages(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg]);
+    }
+    function onDMReacted(raw) {
+      if (raw.conversation_id !== conversationId) return;
+      const msg = normaliseMessage(raw);
+      setMessages(prev => prev.map(m => m.id === msg.id ? msg : m));
     }
     function onTyping(data) {
       if (data.conversation_id !== conversationId) return;
@@ -81,11 +92,13 @@ export default function DMArea({ conversationId, recipient, currentUser }) {
     }
 
     socket.on("new_dm",                 onNewDM);
+    socket.on("dm_reacted",             onDMReacted);
     socket.on("dm_user_typing",         onTyping);
     socket.on("dm_user_stopped_typing", onStopTyping);
 
     return () => {
       socket.off("new_dm",                 onNewDM);
+      socket.off("dm_reacted",             onDMReacted);
       socket.off("dm_user_typing",         onTyping);
       socket.off("dm_user_stopped_typing", onStopTyping);
     };
@@ -129,11 +142,24 @@ export default function DMArea({ conversationId, recipient, currentUser }) {
     setSending(true);
     try {
       const saved = await postDM(conversationId, text, currentUser.id);
-      setMessages(prev => prev.map(m => m.id === tempId ? saved : m));
+      setMessages(prev => {
+        const mapped = prev.map(m => m.id === tempId ? saved : m);
+        const seen = new Set();
+        return mapped.filter(m => !seen.has(m.id) && seen.add(m.id));
+      });
     } catch (err) {
       console.error("DM send failed:", err);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleReact(messageId, emoji) {
+    try {
+      const updated = await reactToDM(conversationId, messageId, currentUser.id, emoji);
+      setMessages(prev => prev.map(m => m.id === messageId ? updated : m));
+    } catch (err) {
+      console.error("DM react failed:", err);
     }
   }
 
@@ -171,6 +197,7 @@ export default function DMArea({ conversationId, recipient, currentUser }) {
               isOwn={msg.senderId === currentUser?.id}
               currentUser={currentUser}
               compact={compact}
+              onReact={handleReact}
             />
           );
         })}
