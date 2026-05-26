@@ -2,7 +2,7 @@
 
 /* Fills the <main> area provided by the root layout */
 .app {
-  height: 100%;
+  height: 100vh;
   display: flex;
   min-height: 0;
   overflow: hidden;
@@ -11,6 +11,7 @@
 .main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
