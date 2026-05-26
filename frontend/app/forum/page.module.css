@@ -2,9 +2,9 @@
 
 /* Fills the <main> area provided by the root layout */
 .app {
-  height: 100vh;
-  display: flex;
+  flex: 1;
   min-height: 0;
+  display: flex;
   overflow: hidden;
 }
 
