@@ -1,43 +1,44 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 
 const API = "http://localhost:8000";
-const DEFAULT_COURSE = "course_1";
 
 const TABS = { CHAT: "chat", UPLOAD: "upload", FILES: "files" };
 
-// Replace with courses fetched from Google Classroom API later
-const COURSES = [
-  { id: "course_1", name: "Bio 101" },
-  { id: "course_2", name: "Chemistry 201" },
-  { id: "course_3", name: "Physics 301" },
-];
-
 const STATUS_COLORS = {
-  indexed:    "#57f287",  // green
-  processing: "#fee75c",  // yellow
-  error:      "#f04747",  // red
-  duplicate:  "#949ba4",  // grey
+  indexed:    "#57f287",
+  processing: "#fee75c",
+  error:      "#f04747",
+  duplicate:  "#949ba4",
 };
 
 export default function AIPage() {
-  const [activeTab, setActiveTab]       = useState(TABS.CHAT);
-  const [courseId, setCourseId]         = useState(DEFAULT_COURSE);
-  const [messages, setMessages]         = useState([]);
-  const [input, setInput]               = useState("");
-  const [loading, setLoading]           = useState(false);
+  const [activeTab, setActiveTab]         = useState(TABS.CHAT);
+  const [courseId, setCourseId]           = useState("");
+  const [courses, setCourses]             = useState([]);
+  const [isConnected, setIsConnected]     = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(true);
+  const [messages, setMessages]           = useState([]);
+  const [input, setInput]                 = useState("");
+  const [loading, setLoading]             = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadFile, setUploadFile]     = useState(null);
-  const [useOCR, setUseOCR]            = useState(false);
-  const [indexedFiles, setIndexedFiles] = useState([]);
-  const [error, setError]               = useState("");
+  const [uploadFile, setUploadFile]       = useState(null);
+  const [useOCR, setUseOCR]              = useState(false);
+  const [indexedFiles, setIndexedFiles]   = useState([]);
+  const [error, setError]                 = useState("");
   const [streamingText, setStreamingText] = useState("");
   const bottomRef = useRef(null);
 
   const storageKey = `sars_chat_history_${courseId}`;
 
-  // ── Load chat history + files when course changes ─────────────
+  // ── On mount: check Google connection ─────────────────────────
   useEffect(() => {
+    checkGoogleConnection();
+  }, []);
+
+  // ── When course changes: load chat history + files ─────────────
+  useEffect(() => {
+    if (!courseId) return;
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       try { setMessages(JSON.parse(saved)); }
@@ -57,6 +58,73 @@ export default function AIPage() {
       localStorage.setItem(storageKey, JSON.stringify(messages));
   }, [messages, courseId]);
 
+  // ── Poll for processing files ──────────────────────────────────
+  useEffect(() => {
+    const hasProcessing = indexedFiles.some(f => f.status === "processing");
+    if (!hasProcessing) return;
+    const timer = setInterval(fetchIndexedFiles, 3000);
+    return () => clearInterval(timer);
+  }, [indexedFiles, courseId]);
+
+  // ── Auth & course fetching ─────────────────────────────────────
+  const checkGoogleConnection = async () => {
+    setCheckingConnection(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const res = await fetch(`${API}/auth/google/me`, {
+        credentials: "include",
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        setIsConnected(false);
+        return;
+      }
+
+      const data = await res.json();
+      const connected = Boolean(data.user && data.has_access_token);
+      setIsConnected(connected);
+
+      if (connected) fetchCourses();
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        console.error("Connection check failed:", err);
+      }
+      setIsConnected(false);
+    } finally {
+      clearTimeout(timeout);
+      setCheckingConnection(false);
+    }
+  };
+
+  const fetchCourses = async () => {
+    try {
+      const res = await fetch(`${API}/classroom/courses`, {
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        setIsConnected(false);
+        setCourses([]);
+        return;
+      }
+
+      if (!res.ok) throw new Error("Failed to fetch courses");
+
+      const data = await res.json();
+      const fetched = data.courses || [];
+      setCourses(fetched);
+
+      if (fetched.length > 0) setCourseId(fetched[0].id);
+    } catch (err) {
+      console.error("Failed to fetch courses:", err);
+      setCourses([]);
+    }
+  };
+
+  // ── RAG helpers ────────────────────────────────────────────────
   function defaultWelcome() {
     return {
       role: "assistant",
@@ -65,6 +133,7 @@ export default function AIPage() {
   }
 
   const fetchIndexedFiles = async () => {
+    if (!courseId) return;
     try {
       const res = await fetch(`${API}/rag/files/${courseId}`);
       if (res.ok) {
@@ -75,14 +144,6 @@ export default function AIPage() {
       console.error("Failed to fetch files:", e);
     }
   };
-
-  // Poll for processing files until all are done
-  useEffect(() => {
-    const hasProcessing = indexedFiles.some(f => f.status === "processing");
-    if (!hasProcessing) return;
-    const timer = setInterval(fetchIndexedFiles, 3000);
-    return () => clearInterval(timer);
-  }, [indexedFiles, courseId]);
 
   const deduplicateCitations = (citations) => {
     if (!citations?.length) return [];
@@ -107,7 +168,7 @@ export default function AIPage() {
       url.searchParams.append("query", question);
       url.searchParams.append("course_id", courseId);
 
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), { credentials: "include" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const reader = response.body.getReader();
@@ -170,7 +231,12 @@ export default function AIPage() {
       url.searchParams.append("course_id", courseId);
       url.searchParams.append("use_ocr", useOCR ? "true" : "false");
 
-      const res = await fetch(url.toString(), { method: "POST", body: form });
+      const res = await fetch(url.toString(), {
+        method: "POST",
+        body: form,
+        credentials: "include",
+      });
+
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || "Upload failed");
@@ -203,7 +269,10 @@ export default function AIPage() {
   const handleDeleteFile = async (filename, fileId) => {
     if (!window.confirm(`Delete "${filename}" and all its indexed chunks?`)) return;
     try {
-      const res = await fetch(`${API}/rag/files/${courseId}/${fileId}`, { method: "DELETE" });
+      const res = await fetch(`${API}/rag/files/${courseId}/${fileId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         setMessages(prev => [...prev, {
@@ -218,8 +287,88 @@ export default function AIPage() {
     }
   };
 
-  const courseName = COURSES.find(c => c.id === courseId)?.name || courseId;
+  const courseName = courses.find(c => c.id === courseId)?.name || courseId;
 
+  // ── Loading state ──────────────────────────────────────────────
+  if (checkingConnection) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26]">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+          * { font-family: 'Inter', sans-serif; }
+          .pulse { animation: pulseSoft 1.4s ease-in-out infinite; }
+          @keyframes pulseSoft { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.85)} }
+        `}</style>
+        <div className="text-center">
+          <div className="flex gap-3 justify-center mb-5">
+            {[0, 0.15, 0.3].map((d, i) => (
+              <div key={i} className="w-3 h-3 bg-[#5865f2] rounded-full pulse"
+                style={{ animationDelay: `${d}s` }} />
+            ))}
+          </div>
+          <p className="text-[#949ba4] text-sm">Checking Google Classroom connection…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Not connected gate ─────────────────────────────────────────
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26] px-6">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+          * { font-family: 'Inter', sans-serif; }
+          .btn-connect { background: #5865f2; transition: all .2s; }
+          .btn-connect:hover { background: #4752c4; transform: scale(1.03); }
+          .gate-card { animation: fadeUp .5s ease-out; }
+          @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        `}</style>
+        <div className="gate-card max-w-md w-full">
+          <div className="bg-[#2c2f33] border border-[#40444b] rounded-2xl p-10 text-center shadow-2xl">
+            <div className="w-20 h-20 rounded-2xl bg-[#5865f2]/15 border border-[#5865f2]/30 mx-auto mb-6 flex items-center justify-center text-4xl">
+              🎓
+            </div>
+            <h2 className="text-2xl font-semibold text-[#f2f3f5] mb-3">
+              Connect Google Classroom
+            </h2>
+            <p className="text-[#949ba4] leading-relaxed mb-8">
+              Link your Google Classroom account to access your real courses and use the AI assistant with your actual course materials.
+            </p>
+            <a href="/connect"
+              className="btn-connect inline-block text-white px-8 py-3 rounded-full text-sm font-medium">
+              Go to Connect Page →
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── No courses found edge case ────────────────────────────────
+  if (isConnected && courses.length === 0) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26] px-6">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+          * { font-family: 'Inter', sans-serif; }
+        `}</style>
+        <div className="max-w-md w-full bg-[#2c2f33] border border-[#40444b] rounded-2xl p-10 text-center">
+          <div className="text-5xl mb-4">📭</div>
+          <h2 className="text-xl font-semibold text-[#f2f3f5] mb-3">No Active Courses Found</h2>
+          <p className="text-[#949ba4] leading-relaxed mb-6">
+            No courses were found for the current term. Make sure your Google Classroom has active courses enrolled for this term.
+          </p>
+          <button onClick={checkGoogleConnection}
+            className="bg-[#5865f2] hover:bg-[#4752c4] text-white px-6 py-2 rounded-full text-sm font-medium transition">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main app ───────────────────────────────────────────────────
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26]">
       <style>{`
@@ -261,7 +410,9 @@ export default function AIPage() {
                 onChange={e => setCourseId(e.target.value)}
                 className="bg-[#40444b] border border-[#36393f] rounded px-3 py-2 text-sm text-[#dbdee1] focus:outline-none focus:border-[#5865f2] transition"
               >
-                {COURSES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
               </select>
               <div className="text-right">
                 <p className="text-sm text-[#dbdee1]">{courseName}</p>
@@ -410,7 +561,6 @@ export default function AIPage() {
                     onChange={e => setUploadFile(e.target.files[0])} />
                 </label>
 
-                {/* OCR Toggle */}
                 <div className="flex items-center justify-between bg-[#2c2f33] rounded-lg px-4 py-3 border border-[#40444b]">
                   <div>
                     <p className="text-sm text-[#dbdee1] font-medium">Enable OCR</p>
