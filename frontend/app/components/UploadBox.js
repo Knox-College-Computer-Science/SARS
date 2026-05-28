@@ -6,8 +6,11 @@ export default function UploadBox() {
   const [subject, setSubject] = useState("");
   const [loading, setLoading] = useState(false);
   const [lastResult, setLastResult] = useState(null);
-  const [courses, setCourses] = useState([]);
+  const [currentCourses, setCurrentCourses] = useState([]);
+  const [pastCourses, setPastCourses] = useState([]);
   const [loadingCourses, setLoadingCourses] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [openGroup, setOpenGroup] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const inputRef = useRef(null);
 
@@ -19,29 +22,46 @@ export default function UploadBox() {
     setLoadingCourses(true);
 
     try {
-      const res = await fetch("/api/classroom/courses", {
+      const res = await fetch("/api/classroom/courses/upload-options", {
         credentials: "include",
       });
 
       if (res.status === 401) {
-        setCourses([]);
+        setCurrentCourses([]);
+        setPastCourses([]);
         return;
       }
 
       if (!res.ok) {
-        throw new Error("Failed to fetch courses");
+        throw new Error("Failed to fetch course upload options");
       }
 
       const data = await res.json();
-      setCourses(data.courses || []);
+
+      setCurrentCourses(data.current_courses || []);
+      setPastCourses(data.past_courses || []);
     } catch (err) {
-      console.error("Failed to fetch courses:", err);
-      setCourses([]);
+      console.error("Failed to fetch course upload options:", err);
+      setCurrentCourses([]);
+      setPastCourses([]);
     } finally {
       setLoadingCourses(false);
     }
   };
 
+  const getCourseLabel = (course) => {
+    if (course.section) {
+      return `${course.name} - ${course.section}`;
+    }
+
+    return course.name;
+  };
+
+  const handleCourseSelect = (course) => {
+    setSubject(course.name);
+    setDropdownOpen(false);
+    setOpenGroup(null);
+  };
 
   const handleUpload = async () => {
     if (!file || !subject) {
@@ -153,33 +173,103 @@ export default function UploadBox() {
           </div>
         )}
 
-        <label className="block text-gray-400 text-sm mb-1">Select Subject</label>
-        <select
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          className="w-full p-2 mb-6 rounded bg-[#343541] text-white outline-none border border-gray-600"
-        >
-          <option value="">-- Choose a current class --</option>
+        <label className="block text-gray-400 text-sm mb-1">Select Class</label>
+        <div className="relative mb-6">
+          <button
+            type="button"
+            onClick={() => setDropdownOpen((prev) => !prev)}
+            className="w-full p-2 rounded bg-[#343541] text-white outline-none border border-gray-600 text-left flex items-center justify-between"
+          >
+            <span className={subject ? "text-white" : "text-gray-400"}>
+              {subject || "-- Choose a class --"}
+            </span>
+            <span className="text-gray-400">{dropdownOpen ? "▲" : "▼"}</span>
+          </button>
 
-          {loadingCourses && (
-            <option value="" disabled>
-              Loading courses...
-            </option>
+          {dropdownOpen && (
+            <div className="absolute z-50 mt-2 w-full bg-[#343541] border border-gray-600 rounded-lg shadow-lg overflow-hidden">
+              {loadingCourses ? (
+                <div className="p-3 text-sm text-gray-400">Loading courses...</div>
+              ) : (
+                <>
+                  {/* Current-term courses group */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenGroup(openGroup === "current" ? null : "current")
+                    }
+                    className="w-full px-4 py-3 text-left hover:bg-[#444654] flex items-center justify-between font-medium"
+                  >
+                    <span>Current-term courses</span>
+                    <span>{openGroup === "current" ? "▲" : "▼"}</span>
+                  </button>
+
+                  {openGroup === "current" && (
+                    <div className="bg-[#2f3038]">
+                      {currentCourses.length > 0 ? (
+                        currentCourses.map((course) => (
+                          <button
+                            key={course.id}
+                            type="button"
+                            onClick={() => handleCourseSelect(course)}
+                            className="w-full px-6 py-2 text-left text-sm hover:bg-[#444654] text-gray-200"
+                          >
+                            {getCourseLabel(course)}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-6 py-2 text-sm text-gray-500">
+                          No current-term courses found.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Past-term courses group */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenGroup(openGroup === "past" ? null : "past")
+                    }
+                    className="w-full px-4 py-3 text-left hover:bg-[#444654] flex items-center justify-between font-medium border-t border-gray-600"
+                  >
+                    <span>Past-term courses</span>
+                    <span>{openGroup === "past" ? "▲" : "▼"}</span>
+                  </button>
+
+                  {openGroup === "past" && (
+                    <div className="bg-[#2f3038] max-h-64 overflow-y-auto">
+                      {pastCourses.length > 0 ? (
+                        pastCourses.map((course) => (
+                          <button
+                            key={course.id}
+                            type="button"
+                            onClick={() => handleCourseSelect(course)}
+                            className="w-full px-6 py-2 text-left text-sm hover:bg-[#444654] text-gray-200"
+                          >
+                            {getCourseLabel(course)}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-6 py-2 text-sm text-gray-500">
+                          No past-term courses found.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
+        </div>
 
-          {!loadingCourses &&
-            courses.map((course) => (
-              <option key={course.id} value={course.name}>
-                {course.name}
-              </option>
-            ))}
-        </select>
-
-        {!loadingCourses && courses.length === 0 && (
-          <p className="text-yellow-400 text-xs mb-4">
-            No current-term courses found. Try reconnecting Google Classroom.
-          </p>
-        )}
+        {!loadingCourses &&
+          currentCourses.length === 0 &&
+          pastCourses.length === 0 && (
+            <p className="text-yellow-400 text-xs mb-4">
+              No courses found. Try reconnecting Google Classroom.
+            </p>
+          )}
 
         {/* Upload button */}
         <button

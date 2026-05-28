@@ -82,6 +82,16 @@ def is_current_term_course(
         term_end,
     )
 
+def serialize_course(course: dict) -> dict:
+    return {
+        "id": course.get("id"),
+        "name": course.get("name"),
+        "section": course.get("section"),
+        "subject": course.get("subject"),
+        "calendarId": course.get("calendarId"),
+        "courseState": course.get("courseState"),
+    }
+
 def get_courses_from_google(request: Request):
     access_token = request.session.get("access_token")
 
@@ -158,6 +168,92 @@ def get_courses(request: Request):
     return JSONResponse(content={
         "user": user,
         "courses": courses
+    })
+
+@router.get("/courses/upload-options")
+def get_upload_course_options(request: Request):
+    user = request.session.get("user")
+
+    if not user:
+        raise HTTPException(status_code=401, detail="User is not logged in")
+
+    access_token = request.session.get("access_token")
+
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Google Classroom is not connected"
+        )
+
+    try:
+        courses_data = get_classroom_courses(access_token)
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+
+        request.session.pop("access_token", None)
+
+        if status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail="Google Classroom connection expired. Please reconnect."
+            )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch Google Classroom courses"
+        )
+
+    raw_courses = courses_data.get("courses", [])
+    current_term, term_start, term_end = get_current_term_window()
+
+    if not current_term or not term_start or not term_end:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not determine current Knox term."
+        )
+
+    current_courses = []
+    past_courses = []
+    seen_course_ids = set()
+
+    for course in raw_courses:
+        course_id = course.get("id")
+
+        if not course_id or course_id in seen_course_ids:
+            continue
+
+        seen_course_ids.add(course_id)
+
+        try:
+            if is_current_term_course(
+                course,
+                access_token,
+                current_term,
+                term_start,
+                term_end,
+            ):
+                current_courses.append(serialize_course(course))
+            else:
+                past_courses.append(serialize_course(course))
+
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 401:
+                request.session.pop("access_token", None)
+
+                raise HTTPException(
+                    status_code=401,
+                    detail="Google Classroom connection expired. Please reconnect."
+                )
+
+            past_courses.append(serialize_course(course))
+
+    current_courses.sort(key=lambda course: course.get("name") or "")
+    past_courses.sort(key=lambda course: course.get("name") or "")
+
+    return JSONResponse(content={
+        "user": user,
+        "current_courses": current_courses,
+        "past_courses": past_courses,
     })
 
 @router.get("/announcements")
