@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from database import Base
+from datetime import datetime
 
 
 def generate_uuid():
@@ -150,6 +151,17 @@ class DirectMessage(Base):
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User", back_populates="direct_messages")
     reactions = relationship("DirectMessageReaction", back_populates="message", cascade="all, delete-orphan")
+
+class Todo(Base):
+    __tablename__ = "todos"
+
+    id         = Column(Integer,  primary_key=True, index=True)
+    user_id    = Column(String, ForeignKey("users.id"), nullable=False)
+    text       = Column(String,   nullable=False)
+    category   = Column(String,   default="Personal")
+    done       = Column(Boolean,  default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+ 
 
 
 class DirectMessageReaction(Base):
