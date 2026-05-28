@@ -4,7 +4,7 @@ from sqlalchemy import desc
 from pydantic import BaseModel
 
 from database import get_db
-from models import Conversation, ConversationParticipant, DirectMessage, User
+from models import Conversation, ConversationParticipant, DirectMessage, DirectMessageReaction, User
 from security import get_current_user
 from socket_manager import sio
 
@@ -12,6 +12,13 @@ router = APIRouter()
 
 
 def _serialize_msg(m: DirectMessage, sender: User) -> dict:
+    reaction_map: dict[str, dict] = {}
+    for r in m.reactions:
+        if r.emoji not in reaction_map:
+            reaction_map[r.emoji] = {"count": 0, "users": []}
+        reaction_map[r.emoji]["count"] += 1
+        reaction_map[r.emoji]["users"].append(r.user_id)
+
     return {
         "id":              m.id,
         "conversation_id": m.conversation_id,
@@ -20,6 +27,7 @@ def _serialize_msg(m: DirectMessage, sender: User) -> dict:
         "sender_initials": sender.initials     if sender else "??",
         "content":         m.content,
         "sent_at":         m.sent_at.isoformat() if m.sent_at else None,
+        "reactions":       reaction_map,
     }
 
 
@@ -173,4 +181,48 @@ async def send_dm(conversation_id: str, body: SendDM, db: Session = Depends(get_
 
     payload = _serialize_msg(msg, sender)
     await sio.emit("new_dm", payload, room=f"conversation:{conversation_id}")
+    return payload
+
+
+class ReactDM(BaseModel):
+    user_id: str
+    emoji:   str
+
+
+@router.post("/{conversation_id}/messages/{message_id}/react")
+async def react_to_dm(
+    conversation_id: str,
+    message_id: str,
+    body: ReactDM,
+    db: Session = Depends(get_db),
+):
+    msg = db.query(DirectMessage).filter(
+        DirectMessage.id == message_id,
+        DirectMessage.conversation_id == conversation_id,
+        DirectMessage.deleted_at == None,
+    ).first()
+    if not msg:
+        raise HTTPException(404, "Message not found")
+
+    existing = db.query(DirectMessageReaction).filter(
+        DirectMessageReaction.message_id == message_id,
+        DirectMessageReaction.user_id == body.user_id,
+        DirectMessageReaction.emoji == body.emoji,
+    ).first()
+
+    if existing:
+        db.delete(existing)
+        db.commit()
+    else:
+        db.add(DirectMessageReaction(
+            message_id=message_id,
+            user_id=body.user_id,
+            emoji=body.emoji,
+        ))
+        db.commit()
+
+    db.refresh(msg)
+    sender = db.query(User).filter(User.id == msg.sender_id).first()
+    payload = _serialize_msg(msg, sender)
+    await sio.emit("dm_reacted", payload, room=f"conversation:{conversation_id}")
     return payload
