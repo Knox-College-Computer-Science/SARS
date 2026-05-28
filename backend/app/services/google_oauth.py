@@ -24,7 +24,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
 ]
 
-
 def generate_state() -> str:
     return secrets.token_urlsafe(32)
 
@@ -90,6 +89,16 @@ def get_classroom_courses(access_token: str) -> dict:
             break
 
     return {"courses": all_courses}
+
+def get_classroom_courses_for_upload_options(access_token: str) -> dict:
+    """
+    Returns all Google Classroom courses that can be used in the Upload Notes dropdown.
+
+    This includes both ACTIVE and ARCHIVED courses so the backend can split them into:
+    - current_courses
+    - past_courses
+    """
+    return get_classroom_courses(access_token)
 
 def get_course_announcements(access_token: str, course_id: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}

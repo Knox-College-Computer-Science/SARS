@@ -1,12 +1,12 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from pydantic import BaseModel
 from typing import Optional
 
 from database import get_db
-from models import ChannelMessage, MessageReaction, Channel, User
+from models import ChannelMessage, MessageAttachment, MessageReaction, Channel, Course, User
 from socket_manager import sio
 
 router = APIRouter()
@@ -22,6 +22,15 @@ def _serialize_message(m: ChannelMessage, db: Session) -> dict:
         reaction_map[r.emoji]["count"] += 1
         reaction_map[r.emoji]["users"].append(r.user_id)
 
+    attachment = None
+    if m.attachments:
+        a = m.attachments[0]
+        attachment = {
+            "filename":        a.filename,
+            "drive_file_id":   a.drive_file_id,
+            "drive_view_link": a.drive_view_link,
+        }
+
     return {
         "id":              m.id,
         "channel_id":      m.channel_id,
@@ -33,6 +42,7 @@ def _serialize_message(m: ChannelMessage, db: Session) -> dict:
         "edited_at":       m.edited_at.isoformat() if m.edited_at else None,
         "reply_to_id":     m.reply_to_id,
         "reactions":       reaction_map,
+        "attachment":      attachment,
     }
 
 
@@ -200,4 +210,80 @@ async def react_to_message(
     db.refresh(msg)
     payload = _serialize_message(msg, db)
     await sio.emit("message_reacted", payload, room=f"channel:{channel_id}")
+    return payload
+
+
+@router.post("/channels/{channel_id}/messages/upload", status_code=201)
+async def upload_channel_file(
+    request: Request,
+    channel_id: str,
+    file: UploadFile = File(...),
+    sender_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(404, "Channel not found")
+
+    sender = db.query(User).filter(User.id == sender_id).first()
+    if not sender:
+        raise HTTPException(404, "User not found")
+
+    file_bytes = await file.read()
+    access_token = request.session.get("access_token")
+    session_user = request.session.get("user")
+    uploaded_by = session_user.get("email") if session_user else sender.school_email
+
+    # Derive course name for the notes subject label
+    course = db.query(Course).filter(Course.id == channel.course_id).first()
+    subject = course.name if course else channel.name
+
+    drive_file_id = None
+    drive_view_link = None
+
+    if access_token:
+        try:
+            from app.services.google_oauth import get_or_create_sars_folder, upload_file_to_drive
+            folder_id = get_or_create_sars_folder(access_token=access_token)
+            drive_result = upload_file_to_drive(
+                access_token=access_token,
+                file_bytes=file_bytes,
+                filename=file.filename,
+                subject=subject,
+                folder_id=folder_id,
+            )
+            drive_file_id = drive_result["drive_file_id"]
+            drive_view_link = drive_result["drive_view_link"]
+        except Exception as e:
+            print(f"[Drive] Channel file upload failed (non-fatal): {e}")
+
+    # Mirror record into the notes section DB
+    from app.routes.notes import _get_conn
+    notes_conn = _get_conn()
+    notes_conn.execute(
+        "INSERT INTO notes (filename, subject, uploaded_by, drive_file_id, drive_view_link) VALUES (?, ?, ?, ?, ?)",
+        (file.filename, subject, uploaded_by, drive_file_id, drive_view_link),
+    )
+    notes_conn.commit()
+    notes_conn.close()
+
+    msg = ChannelMessage(
+        channel_id=channel_id,
+        sender_id=sender_id,
+        content=file.filename,
+    )
+    db.add(msg)
+    db.flush()
+
+    db.add(MessageAttachment(
+        message_id=msg.id,
+        filename=file.filename,
+        drive_file_id=drive_file_id,
+        drive_view_link=drive_view_link,
+    ))
+    db.commit()
+    db.refresh(msg)
+
+    payload = _serialize_message(msg, db)
+    await sio.emit("new_channel_message", payload, room=f"channel:{channel_id}")
     return payload

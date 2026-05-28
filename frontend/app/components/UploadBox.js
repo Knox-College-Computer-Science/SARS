@@ -13,32 +13,63 @@ export default function UploadBox() {
   const [progress,       setProgress      ] = useState(0);
   const [lastResult,     setLastResult    ] = useState(null);
   const [courses,        setCourses       ] = useState(uploadCache.courses ?? []);
-const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === null);
+  const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === null);
   const [previewUrl,     setPreviewUrl    ] = useState(null);
   const [dragActive,     setDragActive    ] = useState(false);
+  const [currentCourses, setCurrentCourses] = useState([]);
+  const [pastCourses, setPastCourses] = useState([]);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [openGroup, setOpenGroup] = useState(null);
   const inputRef = useRef(null);
 
   useEffect(() => { fetchCourses(); }, []);
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+        setOpenGroup(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
   async function fetchCourses() {
-     // Skip if already cached
-  if (uploadCache.courses !== null) {
-    setCourses(uploadCache.courses);
-    setLoadingCourses(false);
-    return;
-  }
+    if (uploadCache.currentCourses !== null) {
+      setCurrentCourses(uploadCache.currentCourses);
+      setPastCourses(uploadCache.pastCourses ?? []);
+      setLoadingCourses(false);
+      return;
+    }
     setLoadingCourses(true);
     try {
-      const res = await fetch("/api/classroom/courses", { credentials: "include" });
-      if (!res.ok) { setCourses([]); return; }
+      const res = await fetch("/api/classroom/courses/upload-options", { credentials: "include" });
+      if (res.status === 401) { setCurrentCourses([]); setPastCourses([]); return; }
+      if (!res.ok) throw new Error("Failed to fetch course upload options");
       const data = await res.json();
-      setCourses(data.courses || []);
+      uploadCache.currentCourses = data.current_courses || [];
+      uploadCache.pastCourses    = data.past_courses    || [];
+      setCurrentCourses(uploadCache.currentCourses);
+      setPastCourses(uploadCache.pastCourses);
     } catch (err) {
       console.error(err);
-      setCourses([]);
+      setCurrentCourses([]);
+      setPastCourses([]);
     } finally {
       setLoadingCourses(false);
     }
+  }
+
+  function getCourseLabel(course) {
+    return course.section ? `${course.name} - ${course.section}` : course.name;
+  }
+
+  function handleCourseSelect(course) {
+    setSubject(course.name);
+    setDropdownOpen(false);
+    setOpenGroup(null);
   }
 
   function handleFileSelect(f) {
@@ -98,9 +129,10 @@ const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === nul
     }
   }
 
+  const noCourses = !loadingCourses && currentCourses.length === 0 && pastCourses.length === 0;
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-8 relative overflow-hidden">
-      {/* Atmospheric blobs */}
       <div className="absolute top-1/4 right-1/4 w-96 h-96 rounded-full pointer-events-none"
         style={{ background: "rgba(180,197,255,0.04)", filter: "blur(120px)" }} />
       <div className="absolute bottom-1/4 left-1/4 w-64 h-64 rounded-full pointer-events-none"
@@ -118,37 +150,24 @@ const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === nul
           </p>
         </div>
 
-        {/* Drop zone */}
+        {/* Drop zone / Preview */}
         {!previewUrl ? (
           <div
             onClick={() => inputRef.current?.click()}
             onDragEnter={(e) => { e.preventDefault(); setDragActive(true); }}
-            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+            onDragOver={(e)  => { e.preventDefault(); setDragActive(true); }}
             onDragLeave={() => setDragActive(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragActive(false);
-              handleFileSelect(e.dataTransfer.files[0]);
-            }}
+            onDrop={(e) => { e.preventDefault(); setDragActive(false); handleFileSelect(e.dataTransfer.files[0]); }}
             className={`relative group cursor-pointer border-2 border-dashed rounded-lg p-8 flex flex-col items-center justify-center gap-4 mb-8 transition-all ${
-              dragActive
-                ? "border-primary bg-primary/5"
-                : "border-outline-variant hover:border-primary bg-surface-container-lowest"
+              dragActive ? "border-primary bg-primary/5" : "border-outline-variant hover:border-primary bg-surface-container-lowest"
             }`}
           >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={(e) => handleFileSelect(e.target.files[0])}
-            />
+            <input ref={inputRef} type="file" accept=".pdf" className="hidden"
+              onChange={(e) => handleFileSelect(e.target.files[0])} />
             <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-transform ${
               dragActive ? "scale-110" : "group-hover:scale-110"
             }`} style={{ background: "rgba(180,197,255,0.1)" }}>
-              <span className="material-symbols-outlined text-primary" style={{ fontSize: 36 }}>
-                cloud_upload
-              </span>
+              <span className="material-symbols-outlined text-primary" style={{ fontSize: 36 }}>cloud_upload</span>
             </div>
             <div className="text-center">
               <p className="text-xl font-semibold text-on-surface">
@@ -156,27 +175,21 @@ const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === nul
               </p>
               <p className="text-xs text-on-surface-variant mt-1">Maximum file size: 50MB</p>
             </div>
-            <button
-              type="button"
-              className="mt-1 px-5 py-2 bg-surface-container-highest text-on-surface text-sm font-bold rounded-lg border border-outline-variant hover:bg-surface-bright transition-colors"
-            >
+            <button type="button"
+              className="mt-1 px-5 py-2 bg-surface-container-highest text-on-surface text-sm font-bold rounded-lg border border-outline-variant hover:bg-surface-bright transition-colors">
               Browse Files
             </button>
           </div>
         ) : (
-          /* PDF Preview */
           <div className="mb-8 rounded-lg overflow-hidden border border-outline-variant">
             <div className="flex items-center justify-between px-4 py-2 bg-surface-container border-b border-outline-variant">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-error" style={{ fontSize: 16 }}>picture_as_pdf</span>
                 <span className="text-xs text-on-surface-variant truncate max-w-[320px]">{file?.name}</span>
               </div>
-              <button
-                onClick={removeFile}
-                className="text-xs text-on-surface-variant hover:text-error transition-colors flex items-center gap-1"
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>
-                Remove
+              <button onClick={removeFile}
+                className="text-xs text-on-surface-variant hover:text-error transition-colors flex items-center gap-1">
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>close</span>Remove
               </button>
             </div>
             <div className="bg-amber-950/30 border-b border-amber-900/50 px-4 py-2 flex items-start gap-2">
@@ -189,45 +202,97 @@ const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === nul
           </div>
         )}
 
-        {/* Course + Note Type selects */}
+        {/* Course + Note Type */}
         <div className="grid grid-cols-2 gap-6 mb-8">
+
+          {/* Course dropdown */}
           <div className="space-y-1">
             <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider ml-1">
               Select Course
             </label>
-            <div className="relative">
-              <select
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-4 py-2.5 text-sm text-on-surface appearance-none outline-none focus:border-primary transition-colors"
+            <div className="relative" ref={dropdownRef}>
+              <button
+                type="button"
+                onClick={() => setDropdownOpen((p) => !p)}
+                className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-4 py-2.5 text-sm text-on-surface flex items-center justify-between outline-none focus:border-primary transition-colors"
               >
-                <option value="">-- Choose a current class --</option>
-                {loadingCourses && <option disabled>Loading courses…</option>}
-                {courses.map((c) => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
-                ))}
-              </select>
-              <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant" style={{ fontSize: 18 }}>
-                expand_more
-              </span>
+                <span className={subject ? "text-on-surface" : "text-on-surface-variant"}>
+                  {subject || "-- Choose a class --"}
+                </span>
+                <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 18 }}>
+                  {dropdownOpen ? "expand_less" : "expand_more"}
+                </span>
+              </button>
+
+              {dropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full bg-surface-container border border-outline-variant rounded-lg shadow-xl overflow-hidden">
+                  {loadingCourses ? (
+                    <div className="p-3 text-sm text-on-surface-variant">Loading courses…</div>
+                  ) : (
+                    <>
+                      {/* Current term */}
+                      <button type="button"
+                        onClick={() => setOpenGroup(openGroup === "current" ? null : "current")}
+                        className="w-full px-4 py-2.5 text-left text-sm font-bold text-on-surface hover:bg-surface-container-high flex items-center justify-between transition-colors"
+                      >
+                        <span>Current-term courses</span>
+                        <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 16 }}>
+                          {openGroup === "current" ? "expand_less" : "expand_more"}
+                        </span>
+                      </button>
+                      {openGroup === "current" && (
+                        <div className="bg-surface-container-lowest border-t border-outline-variant">
+                          {currentCourses.length > 0 ? currentCourses.map((c) => (
+                            <button key={c.id} type="button" onClick={() => handleCourseSelect(c)}
+                              className="w-full px-6 py-2 text-left text-sm text-on-surface hover:bg-surface-container-high hover:text-primary transition-colors">
+                              {getCourseLabel(c)}
+                            </button>
+                          )) : (
+                            <p className="px-6 py-2 text-xs text-on-surface-variant">No current-term courses found.</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Past term */}
+                      <button type="button"
+                        onClick={() => setOpenGroup(openGroup === "past" ? null : "past")}
+                        className="w-full px-4 py-2.5 text-left text-sm font-bold text-on-surface hover:bg-surface-container-high flex items-center justify-between border-t border-outline-variant transition-colors"
+                      >
+                        <span>Past-term courses</span>
+                        <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 16 }}>
+                          {openGroup === "past" ? "expand_less" : "expand_more"}
+                        </span>
+                      </button>
+                      {openGroup === "past" && (
+                        <div className="bg-surface-container-lowest border-t border-outline-variant max-h-48 overflow-y-auto">
+                          {pastCourses.length > 0 ? pastCourses.map((c) => (
+                            <button key={c.id} type="button" onClick={() => handleCourseSelect(c)}
+                              className="w-full px-6 py-2 text-left text-sm text-on-surface hover:bg-surface-container-high hover:text-primary transition-colors">
+                              {getCourseLabel(c)}
+                            </button>
+                          )) : (
+                            <p className="px-6 py-2 text-xs text-on-surface-variant">No past-term courses found.</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
-            {!loadingCourses && courses.length === 0 && (
-              <p className="text-amber-400 text-xs mt-1 ml-1">
-                No courses found — try reconnecting Google Classroom.
-              </p>
+            {noCourses && (
+              <p className="text-amber-400 text-xs mt-1 ml-1">No courses found — try reconnecting Google Classroom.</p>
             )}
           </div>
 
+          {/* Note Type */}
           <div className="space-y-1">
             <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider ml-1">
               Note Type
             </label>
             <div className="relative">
-              <select
-                value={noteType}
-                onChange={(e) => setNoteType(e.target.value)}
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-4 py-2.5 text-sm text-on-surface appearance-none outline-none focus:border-primary transition-colors"
-              >
+              <select value={noteType} onChange={(e) => setNoteType(e.target.value)}
+                className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg px-4 py-2.5 text-sm text-on-surface appearance-none outline-none focus:border-primary transition-colors">
                 <option>Lecture Notes</option>
                 <option>Research Paper</option>
                 <option>Lab Report</option>
@@ -241,27 +306,16 @@ const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === nul
         </div>
 
         {/* Upload button */}
-        <button
-          onClick={handleUpload}
-          disabled={loading || !file || !subject}
+        <button onClick={handleUpload} disabled={loading || !file || !subject}
           className="w-full py-3 bg-primary text-on-primary text-base font-bold rounded-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ boxShadow: "0 4px 24px rgba(180,197,255,0.15)" }}
         >
           {loading ? (
-            <>
-              <span className="material-symbols-outlined animate-spin" style={{ fontSize: 20 }}>refresh</span>
-              Processing…
-            </>
+            <><span className="material-symbols-outlined animate-spin" style={{ fontSize: 20 }}>refresh</span>Processing…</>
           ) : lastResult ? (
-            <>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>check_circle</span>
-              Upload Complete!
-            </>
+            <><span className="material-symbols-outlined" style={{ fontSize: 20 }}>check_circle</span>Upload Complete!</>
           ) : (
-            <>
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>auto_awesome</span>
-              Upload and Process
-            </>
+            <><span className="material-symbols-outlined" style={{ fontSize: 20 }}>auto_awesome</span>Upload and Process</>
           )}
         </button>
 
@@ -273,31 +327,22 @@ const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === nul
               <span className="text-on-surface-variant">{progress}%</span>
             </div>
             <div className="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
+              <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
             </div>
-            <p className="text-xs text-on-surface-variant text-center italic">
-              Uploading
-            </p>
+            <p className="text-xs text-on-surface-variant text-center italic">Uploading…</p>
           </div>
         )}
 
-        {/* Result card */}
+        {/* Result */}
         {lastResult && (
           <div className="mt-6 p-4 rounded-lg bg-surface-container border border-outline-variant space-y-2">
             <p className="text-sm font-semibold text-on-surface flex items-center gap-2">
-              <span className="material-symbols-outlined text-on-surface" style={{ fontSize: 16 }}>check_circle</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
               {lastResult.message}
             </p>
             {lastResult.drive_view_link && (
-              <a
-                href={lastResult.drive_view_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-xs text-primary hover:underline"
-              >
+              <a href={lastResult.drive_view_link} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1 text-xs text-primary hover:underline">
                 <span className="material-symbols-outlined" style={{ fontSize: 13 }}>folder_open</span>
                 View on Google Drive
                 <span className="material-symbols-outlined" style={{ fontSize: 12 }}>open_in_new</span>
