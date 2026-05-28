@@ -100,6 +100,8 @@ def _serialize_course(course: Course) -> dict:
         "course_code": course.course_code,
         "teacher_name": course.teacher_name,
         "term": course.term,
+        "is_active": course.is_active,
+        "is_current_term": course.is_active,
     }
 
 
@@ -266,8 +268,9 @@ def school_launch(body: SchoolLaunchRequest, request: Request, db: Session = Dep
 
 @router.post("/sync-courses")
 def sync_courses(request: Request, db: Session = Depends(get_db)):
-    from app.routes.classroom import get_courses_from_google
-    from app.services.knox_calendar import get_current_knox_term
+    import requests as http_requests
+    from app.routes.classroom import get_current_term_window, is_current_term_course
+    from app.services.google_oauth import get_classroom_courses
 
     session_user = request.session.get("user")
     nexus_token = request.session.get("nexus_token")
@@ -292,26 +295,57 @@ def sync_courses(request: Request, db: Session = Depends(get_db)):
         request.session["nexus_token"] = nexus_token
         request.session["nexus_user_id"] = user_id
 
-    google_courses = get_courses_from_google(request)
-    current_term = get_current_knox_term() or "Spring 2026"
+    # Fetch ALL Google Classroom courses (active and archived), not just current-term
+    access_token = request.session.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not connected to Google Classroom")
+
+    try:
+        courses_data = get_classroom_courses(access_token)
+    except http_requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        request.session.pop("access_token", None)
+        if status_code == 401:
+            raise HTTPException(status_code=401, detail="Google Classroom connection expired. Please reconnect.")
+        raise HTTPException(status_code=500, detail="Failed to fetch Google Classroom courses")
+
+    raw_courses = courses_data.get("courses", [])
+    current_term_name, term_start, term_end = get_current_term_window()
 
     synced_courses = []
-    for google_course in google_courses:
+    for google_course in raw_courses:
+        course_state = google_course.get("courseState", "")
+        # Only process ACTIVE and ARCHIVED; skip PROVISIONED / DECLINED / SUSPENDED
+        if course_state not in ("ACTIVE", "ARCHIVED"):
+            continue
+
         google_course_id = google_course.get("id")
+        if not google_course_id:
+            continue
+
         course_name = google_course.get("name", "")
         section = google_course.get("section", "")
         creation_time = google_course.get("creationTime", "")
 
-        # Use section as term label if set; otherwise fall back to creation year
+        # Archived courses are never current-term; for ACTIVE ones, check against Knox calendar
+        if course_state == "ARCHIVED":
+            is_current = False
+        elif current_term_name and term_start and term_end:
+            try:
+                is_current = is_current_term_course(
+                    google_course, access_token, current_term_name, term_start, term_end
+                )
+            except Exception:
+                is_current = False
+        else:
+            is_current = True  # No calendar info; assume current
+
         if section:
             term = section
         elif creation_time:
             term = creation_time[:4]
         else:
-            term = current_term
-
-        if not google_course_id:
-            continue
+            term = current_term_name or "Unknown"
 
         course = db.query(Course).filter(Course.school_course_id == google_course_id).first()
         if not course:
@@ -321,15 +355,20 @@ def sync_courses(request: Request, db: Session = Depends(get_db)):
                 course_code=section or google_course_id,
                 teacher_name="",
                 term=term,
+                is_active=is_current,
             )
             db.add(course)
             db.flush()
             db.add(Channel(course_id=course.id, name="general", channel_type="general", position=0))
             db.add(Channel(course_id=course.id, name="announcements", channel_type="announcements", position=1))
             db.flush()
+        else:
+            # Refresh the is_active flag in case term status changed
+            course.is_active = is_current
 
         course_id = course.id
         course_data = _serialize_course(course)
+        course_data["is_current_term"] = is_current
 
         enrollment = (
             db.query(CourseEnrollment)

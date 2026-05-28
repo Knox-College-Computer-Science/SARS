@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from database import Base
+from datetime import datetime
 
 
 def generate_uuid():
@@ -82,6 +83,19 @@ class ChannelMessage(Base):
     channel = relationship("Channel", back_populates="messages")
     sender = relationship("User", back_populates="messages")
     reactions = relationship("MessageReaction", back_populates="message", cascade="all, delete-orphan")
+    attachments = relationship("MessageAttachment", back_populates="message", cascade="all, delete-orphan")
+
+
+class MessageAttachment(Base):
+    __tablename__ = "message_attachments"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    message_id = Column(String, ForeignKey("channel_messages.id"), nullable=False)
+    filename = Column(String, nullable=False)
+    drive_file_id = Column(String, nullable=True)
+    drive_view_link = Column(String, nullable=True)
+
+    message = relationship("ChannelMessage", back_populates="attachments")
 
 
 class MessageReaction(Base):
@@ -136,3 +150,31 @@ class DirectMessage(Base):
 
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User", back_populates="direct_messages")
+    reactions = relationship("DirectMessageReaction", back_populates="message", cascade="all, delete-orphan")
+
+class Todo(Base):
+    __tablename__ = "todos"
+
+    id         = Column(Integer,  primary_key=True, index=True)
+    user_id    = Column(String, ForeignKey("users.id"), nullable=False)
+    text       = Column(String,   nullable=False)
+    category   = Column(String,   default="Personal")
+    done       = Column(Boolean,  default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now())
+ 
+
+
+class DirectMessageReaction(Base):
+    __tablename__ = "direct_message_reactions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    message_id = Column(String, ForeignKey("direct_messages.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    emoji = Column(String(8), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", "emoji", name="uq_dm_reaction"),
+    )
+
+    message = relationship("DirectMessage", back_populates="reactions")

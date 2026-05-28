@@ -22,11 +22,11 @@ export default function ForumPage() {
   const [channels,      setChannels]      = useState([]);
   const [conversations, setConversations] = useState([]);
   const [activeView,    setActiveView]    = useState(null);
-  const [onlineUsers,   setOnlineUsers]   = useState(new Set());
-  const [loading,       setLoading]       = useState(true);
-  const [error,         setError]         = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [noCourses, setNoCourses] = useState(false);
+  const [onlineUsers,      setOnlineUsers]      = useState(new Set());
+  const [userStatuses,     setUserStatuses]     = useState({});
+  const [loading,          setLoading]          = useState(true);
+  const [error,            setError]            = useState(null);
+  const [isGoogleConnected, setIsGoogleConnected] = useState(true);
 
   useEffect(() => {
     async function init() {
@@ -36,16 +36,21 @@ export default function ForumPage() {
         let googleConnected = false;
 
         try {
-          const meRes = await fetch("/api/auth/google/me", {
-            credentials: "include",
-          });
+          const meRes = await fetch("/api/auth/google/me", { credentials: "include" });
+          googleConnected = meRes.ok;
+        } catch {}
 
-          if (meRes.ok) {
-            const meData = await meRes.json();
-            googleConnected = Boolean(meData.user && meData.has_access_token);
-          }
-        } catch {
-          googleConnected = false;
+        if (googleConnected) {
+          const syncData = await syncClassroomCourses();
+          t = syncData.token;
+          user = syncData.user;
+          allCourses = [...(syncData.courses ?? [])].sort(
+            (a, b) => (b.is_current_term ? 1 : 0) - (a.is_current_term ? 1 : 0)
+          );
+        } else {
+          setIsGoogleConnected(false);
+          setLoading(false);
+          return;
         }
 
         if (!googleConnected) {
@@ -112,8 +117,15 @@ export default function ForumPage() {
     function onOnlineUsers(data) {
       setOnlineUsers(new Set(data.users));
     }
-    socket.on("online_users", onOnlineUsers);
-    return () => socket.off("online_users", onOnlineUsers);
+    function onUserStatuses(data) {
+      setUserStatuses(data.statuses ?? {});
+    }
+    socket.on("online_users",   onOnlineUsers);
+    socket.on("user_statuses",  onUserStatuses);
+    return () => {
+      socket.off("online_users",  onOnlineUsers);
+      socket.off("user_statuses", onUserStatuses);
+    };
   }, [currentUser]);
 
   const handleSelectChannel = useCallback((channel) => {
@@ -171,6 +183,18 @@ export default function ForumPage() {
       console.error("Course switch failed:", err);
     }
   }, [token]);
+
+  if (!isGoogleConnected) {
+    return (
+      <div className={styles.app}>
+        <main className={`${styles.main} ${styles.connectMain}`}>
+          <ConnectGoogleClassroomCard
+            message="Connect Google Classroom to access course channels and direct messages with your classmates."
+          />
+        </main>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -252,6 +276,7 @@ export default function ForumPage() {
         token={token}
         courseId={course?.school_course_id}
         onlineUsers={onlineUsers}
+        userStatuses={userStatuses}
       />
 
       <main className={styles.main}>
@@ -262,6 +287,7 @@ export default function ForumPage() {
             channelName={activeView.channelName}
             currentUser={currentUser}
             memberCount={course?.member_count ?? 0}
+            readOnly={course?.is_current_term === false}
           />
         )}
         {activeView?.type === "dm" && (
