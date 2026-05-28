@@ -170,29 +170,58 @@ async function fetchClassroomMaterials() {
         </div>
 
         {/* Uploaded notes list */}
-        <div className="space-y-3">
-          {loadingNotes ? (
-            <>
-              <Skeleton className="h-16 rounded-lg" />
-              <Skeleton className="h-16 rounded-lg" />
-              <Skeleton className="h-16 rounded-lg" />
-            </>
-          ) : filteredNotes.length === 0 ? (
-            <div className="bg-surface-container border border-outline-variant rounded-lg p-6 text-center">
-              <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 32 }}>folder_off</span>
-              <p className="text-sm text-on-surface-variant mt-2">No notes found for this class.</p>
-            </div>
-          ) : (
-            filteredNotes.map((note) => (
-              <NoteCard
-                key={note.id}
-                note={note}
-                isPreviewOpen={previewNoteId === note.id}
-                onPreviewToggle={() => setPreviewNoteId(previewNoteId === note.id ? null : note.id)}
-              />
-            ))
-          )}
-        </div>
+<div className="space-y-3">
+  {loadingNotes ? (
+    <>
+      <Skeleton className="h-16 rounded-lg" />
+      <Skeleton className="h-16 rounded-lg" />
+      <Skeleton className="h-16 rounded-lg" />
+    </>
+  ) : filteredNotes.length === 0 ? (
+    <div className="bg-surface-container border border-outline-variant rounded-lg p-6 text-center">
+      <span
+        className="material-symbols-outlined text-on-surface-variant"
+        style={{ fontSize: 32 }}
+      >
+        folder_off
+      </span>
+
+      <p className="text-sm text-on-surface-variant mt-2">
+        No notes found for this class.
+      </p>
+    </div>
+  ) : (
+    filteredNotes.map((note) => (
+      <div key={note.id}>
+        <NoteCard
+          note={note}
+          isPreviewOpen={previewNoteId === note.id}
+          onPreviewToggle={() =>
+            setPreviewNoteId(
+              previewNoteId === note.id ? null : note.id
+            )
+          }
+        />
+
+        {/* Inline PDF preview */}
+        {previewNoteId === note.id && (
+          <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
+            <iframe
+              src={
+                note.drive_file_id
+                  ? `https://drive.google.com/file/d/${note.drive_file_id}/preview`
+                  : `/api/files/${note.filename}`
+              }
+              title={note.filename}
+              className="w-full"
+              style={{ height: "520px", border: "none" }}
+            />
+          </div>
+        )}
+      </div>
+    ))
+  )}
+</div>
 
         {/* Classroom Materials */}
         {(loadingMaterials || classroomMaterials.filter(c => selectedSubject === "All" || c.courseName === selectedSubject).length > 0) && (
