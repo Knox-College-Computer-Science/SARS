@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 
 const uploadCache = {
-  courses: null,
+  currentCourses: null,
+  pastCourses: null,
 };
 
 export default function UploadBox() {
@@ -12,7 +13,6 @@ export default function UploadBox() {
   const [loading,        setLoading       ] = useState(false);
   const [progress,       setProgress      ] = useState(0);
   const [lastResult,     setLastResult    ] = useState(null);
-  const [courses,        setCourses       ] = useState(uploadCache.courses ?? []);
   const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === null);
   const [previewUrl,     setPreviewUrl    ] = useState(null);
   const [dragActive,     setDragActive    ] = useState(false);
@@ -21,6 +21,7 @@ export default function UploadBox() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [openGroup, setOpenGroup] = useState(null);
   const inputRef = useRef(null);
+  const dropdownRef = useRef(null);
 
   useEffect(() => { fetchCourses(); }, []);
 
@@ -132,13 +133,13 @@ export default function UploadBox() {
   const noCourses = !loadingCourses && currentCourses.length === 0 && pastCourses.length === 0;
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-8 relative overflow-hidden">
+    <div className="min-h-screen bg-background flex items-start justify-center p-8 relative overflow-y-auto">
       <div className="absolute top-1/4 right-1/4 w-96 h-96 rounded-full pointer-events-none"
         style={{ background: "rgba(180,197,255,0.04)", filter: "blur(120px)" }} />
       <div className="absolute bottom-1/4 left-1/4 w-64 h-64 rounded-full pointer-events-none"
         style={{ background: "rgba(227,98,174,0.04)", filter: "blur(100px)" }} />
 
-      <div className="w-full max-w-2xl bg-surface-container-low border border-outline-variant rounded-xl p-8 z-10">
+      <div className="w-full max-w-2xl bg-surface-container-low border border-outline-variant rounded-xl p-8 z-10 overflow-visible">
 
         {/* Header */}
         <div className="text-center mb-8">
@@ -225,7 +226,7 @@ export default function UploadBox() {
               </button>
 
               {dropdownOpen && (
-                <div className="absolute z-50 mt-1 w-full bg-surface-container border border-outline-variant rounded-lg shadow-xl overflow-hidden">
+                <div className="absolute z-[9999] mt-1 w-full bg-surface-container border border-outline-variant rounded-lg shadow-xl overflow-visible">
                   {loadingCourses ? (
                     <div className="p-3 text-sm text-on-surface-variant">Loading courses…</div>
                   ) : (
