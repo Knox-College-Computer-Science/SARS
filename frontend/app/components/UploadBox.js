@@ -58,7 +58,7 @@ export default function UploadBox() {
   };
 
   const handleCourseSelect = (course) => {
-    setSubject(course.name);
+    setSubject(getCourseLabel(course));
     setDropdownOpen(false);
     setOpenGroup(null);
   };
