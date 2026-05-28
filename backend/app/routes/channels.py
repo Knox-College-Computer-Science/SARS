@@ -73,6 +73,8 @@ def get_course_channels(
             "teacher_name":     course.teacher_name,
             "term":             course.term,
             "member_count":     member_count,
+            "is_active":        course.is_active,
+            "is_current_term":  course.is_active,
         },
         "channels": serialized,
     }

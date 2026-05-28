@@ -1,16 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&display=swap');
+
 /* Fills the <main> area provided by the root layout */
 .app {
   flex: 1;
-  display: flex;
   min-height: 0;
+  display: flex;
   overflow: hidden;
 }
 
 .main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.connectMain {
+  align-items: center;
+  justify-content: center;
+  background: #1e1f23;
+  padding: 40px;
 }
 
 /* Loading / error splash */
@@ -20,43 +30,46 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  background: #0d0e0f;
+  gap: 10px;
+  background: #1a1b1e;
 }
 
 .splashLogo {
-  font-size: 2rem;
-  font-weight: 900;
-  letter-spacing: -0.04em;
-  color: #f5f6f8;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1.8rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f0f0f3;
 }
 
 .splashSub {
-  color: rgba(240, 241, 244, 0.52);
-  font-size: 1rem;
+  color: rgba(232, 233, 236, 0.4);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .splashError {
   text-align: center;
-  color: rgba(255, 180, 170, 0.9);
-  font-size: 1rem;
-  line-height: 1.7;
+  color: rgba(255, 170, 160, 0.85);
+  font-size: 0.95rem;
+  line-height: 1.75;
 }
 
 .retryBtn {
-  margin-top: 16px;
-  padding: 10px 20px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(255,255,255,0.08);
-  color: #f5f6f8;
-  font-size: 0.95rem;
+  margin-top: 14px;
+  padding: 8px 20px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e9ec;
+  font-size: 0.88rem;
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background 150ms;
 }
 
 .retryBtn:hover {
-  background: rgba(255,255,255,0.14);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Welcome placeholder when no channel is selected */
@@ -66,20 +79,26 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  color: rgba(240, 241, 244, 0.52);
+  gap: 10px;
+  color: rgba(232, 233, 236, 0.4);
+  background: #1e1f23;
 }
 
 .welcomeIcon {
-  font-size: 3rem;
+  font-size: 2rem;
+  opacity: 0.4;
 }
 
 .welcome h2 {
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: rgba(240, 241, 244, 0.72);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1.35rem;
+  font-weight: 500;
+  color: rgba(232, 233, 236, 0.6);
+  letter-spacing: -0.01em;
 }
 
 .welcome p {
-  font-size: 0.95rem;
+  font-size: 0.85rem;
+  color: rgba(232, 233, 236, 0.35);
+  letter-spacing: 0.01em;
 }

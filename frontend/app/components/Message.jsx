@@ -4,12 +4,12 @@ import { useState } from "react";
 import styles from "./Message.module.css";
 
 const AVATAR_COLORS = [
-  { bg: "#dff2e8", text: "#457b64" },
-  { bg: "#efe1c7", text: "#8d6338" },
-  { bg: "#e1e0fb", text: "#5d5bac" },
-  { bg: "#d6e7f7", text: "#4771a8" },
+  { bg: "#2a3a32", text: "#7ab898" },
+  { bg: "#3a3020", text: "#c4965a" },
+  { bg: "#2a2848", text: "#9996d8" },
+  { bg: "#1e2e40", text: "#6e9ec8" },
 ];
-const OWN_AVATAR = { bg: "#8eb6ff", text: "#10233e" };
+const OWN_AVATAR = { bg: "#243040", text: "#7aaad8" };
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 
 function getAvatarColor(id = "") {
@@ -22,6 +22,41 @@ function formatTime(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return iso;
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function SmileIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 13s1.5 2 4 2 4-2 4-2" />
+      <line x1="9" y1="9" x2="9.01" y2="9" />
+      <line x1="15" y1="9" x2="15.01" y2="9" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  );
 }
 
 function EditBox({ initial, onSave, onCancel }) {
@@ -56,7 +91,6 @@ export default function Message({
   onDelete,
   compact,
 }) {
-  const [hovered,    setHovered]    = useState(false);
   const [editing,    setEditing]    = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -70,13 +104,10 @@ export default function Message({
   }
 
   const reactionEntries = Object.entries(msg.reactions ?? {});
+  const showActions = !editing && (onReact || (isOwn && (onEdit || onDelete)));
 
   return (
-    <article
-      className={`${styles.root} ${compact ? styles.compact : ""}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPickerOpen(false); }}
-    >
+    <article className={`${styles.root} ${compact ? styles.compact : ""}`}>
       {!compact ? (
         <div
           className={styles.avatar}
@@ -105,6 +136,22 @@ export default function Message({
             onSave={handleSaveEdit}
             onCancel={() => setEditing(false)}
           />
+        ) : msg.attachment ? (
+          <a
+            href={msg.attachment.drive_view_link ?? "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.attachCard}
+          >
+            <span className={styles.attachIcon}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </span>
+            <span className={styles.attachName}>{msg.attachment.filename}</span>
+            <span className={styles.attachLink}>Open in Drive →</span>
+          </a>
         ) : (
           <p className={styles.text}>{msg.content}</p>
         )}
@@ -128,48 +175,50 @@ export default function Message({
         )}
       </div>
 
-      {hovered && !editing && (
+      {showActions && (
         <div className={styles.actions}>
-          <div className={styles.emojiTriggerWrap}>
-            <button
-              className={styles.actionBtn}
-              title="React"
-              onClick={() => setPickerOpen(p => !p)}
-            >
-              😊
-            </button>
-            {pickerOpen && (
-              <div className={styles.emojiPicker}>
-                {QUICK_EMOJIS.map(e => (
-                  <button
-                    key={e}
-                    className={styles.emojiBtn}
-                    onClick={() => { onReact?.(msg.id, e); setPickerOpen(false); }}
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {isOwn && (
-            <>
+          {onReact && (
+            <div className={styles.emojiTriggerWrap}>
               <button
                 className={styles.actionBtn}
-                title="Edit"
-                onClick={() => setEditing(true)}
+                title="React"
+                onClick={() => setPickerOpen(p => !p)}
               >
-                ✏️
+                <SmileIcon />
               </button>
-              <button
-                className={`${styles.actionBtn} ${styles.deleteBtn}`}
-                title="Delete"
-                onClick={() => onDelete?.(msg.id)}
-              >
-                🗑
-              </button>
-            </>
+              {pickerOpen && (
+                <div className={styles.emojiPicker}>
+                  {QUICK_EMOJIS.map(e => (
+                    <button
+                      key={e}
+                      className={styles.emojiBtn}
+                      onClick={() => { onReact?.(msg.id, e); setPickerOpen(false); }}
+                    >
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isOwn && onEdit && (
+            <button
+              className={styles.actionBtn}
+              title="Edit"
+              onClick={() => setEditing(true)}
+            >
+              <PencilIcon />
+            </button>
+          )}
+          {isOwn && onDelete && (
+            <button
+              className={`${styles.actionBtn} ${styles.deleteBtn}`}
+              title="Delete"
+              onClick={() => onDelete?.(msg.id)}
+            >
+              <TrashIcon />
+            </button>
           )}
         </div>
       )}
