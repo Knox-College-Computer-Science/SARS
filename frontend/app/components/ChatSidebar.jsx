@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import styles from "./ChatSidebar.module.css";
 import UserPickerModal from "./UserPickerModal";
 import NewChannelModal from "./NewChannelModal";
+import socket from "@/lib/socket";
 
 const AVATAR_COLORS = [
   { bg: "#dcefe7", text: "#3e7a60" },
@@ -11,6 +12,12 @@ const AVATAR_COLORS = [
   { bg: "#e0def8", text: "#6360a9" },
   { bg: "#d6e4f6", text: "#4671a8" },
 ];
+
+const STATUS_CONFIG = {
+  active:   { color: "#4ade80", label: "Active" },
+  away:     { color: "#fbbf24", label: "Away" },
+  inactive: { color: "#6b7280", label: "Inactive" },
+};
 
 function getAvatarColor(id = "") {
   const n = Array.from(id).reduce((s, c) => s + c.charCodeAt(0), 0);
@@ -23,6 +30,17 @@ function PlusIcon() {
       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <line x1="10" y1="12" x2="14" y2="12" />
     </svg>
   );
 }
@@ -42,9 +60,37 @@ export default function ChatSidebar({
   token,
   courseId,
   onlineUsers,
+  userStatuses,
 }) {
-  const [showUserPicker, setShowUserPicker] = useState(false);
-  const [showNewChannel, setShowNewChannel] = useState(false);
+  const [showUserPicker,  setShowUserPicker]  = useState(false);
+  const [showNewChannel,  setShowNewChannel]  = useState(false);
+  const [myStatus,        setMyStatus]        = useState("active");
+  const [showStatusMenu,  setShowStatusMenu]  = useState(false);
+  const statusMenuRef = useRef(null);
+
+  const isCurrentTerm = course?.is_current_term !== false;
+
+  // Close status menu on outside click
+  useEffect(() => {
+    function handleClick(e) {
+      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target)) {
+        setShowStatusMenu(false);
+      }
+    }
+    if (showStatusMenu) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showStatusMenu]);
+
+  function changeStatus(status) {
+    setMyStatus(status);
+    socket.emit("set_user_status", { status });
+    setShowStatusMenu(false);
+  }
+
+  function getRecipientStatus(userId) {
+    if (!onlineUsers?.has(userId)) return null;   // offline — no dot
+    return userStatuses?.[userId] ?? "active";
+  }
 
   const isChannelActive = (ch) =>
     activeView?.type === "channel" && activeView.channelId === ch.id;
@@ -66,16 +112,24 @@ export default function ChatSidebar({
               }}
             >
               {courses.map(c => (
-                <option key={c.school_course_id} value={c.school_course_id}>{c.name}</option>
+                <option key={c.school_course_id} value={c.school_course_id}>
+                  {c.name}{c.is_current_term === false ? " (Archive)" : ""}
+                </option>
               ))}
             </select>
           ) : (
-            <div className={styles.courseName}>{course?.name ?? "Loading…"}</div>
+            <div className={styles.courseName}>
+              {course?.name ?? "Loading…"}
+              {!isCurrentTerm && (
+                <span className={styles.archiveBadge}>Archive</span>
+              )}
+            </div>
           )}
           <div className={styles.courseMeta}>
             {course?.course_code ?? course?.courseCode ?? ""}
             {course?.term ? ` · ${course.term}` : ""}
           </div>
+
           {currentUser && (
             <div className={styles.selfRow}>
               <div
@@ -88,7 +142,30 @@ export default function ChatSidebar({
                 {currentUser.initials}
               </div>
               <span className={styles.selfName}>{currentUser.name}</span>
-              <span className={styles.onlineDot} title="Online" />
+
+              {/* Status picker */}
+              <div className={styles.statusWrapper} ref={statusMenuRef}>
+                <button
+                  className={styles.statusDotBtn}
+                  style={{ background: STATUS_CONFIG[myStatus].color }}
+                  title={`Status: ${STATUS_CONFIG[myStatus].label} — click to change`}
+                  onClick={() => setShowStatusMenu(m => !m)}
+                />
+                {showStatusMenu && (
+                  <div className={styles.statusMenu}>
+                    {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+                      <button
+                        key={key}
+                        className={`${styles.statusOption} ${myStatus === key ? styles.statusOptionActive : ""}`}
+                        onClick={() => changeStatus(key)}
+                      >
+                        <span className={styles.statusOptionDot} style={{ background: cfg.color }} />
+                        {cfg.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -96,14 +173,23 @@ export default function ChatSidebar({
         <nav className={styles.nav}>
           <div className={styles.sectionRow}>
             <span className={styles.sectionLabel}>Channels</span>
-            <button
-              className={styles.addBtn}
-              title="New channel"
-              onClick={() => setShowNewChannel(true)}
-            >
-              <PlusIcon />
-            </button>
+            {isCurrentTerm && (
+              <button
+                className={styles.addBtn}
+                title="New channel"
+                onClick={() => setShowNewChannel(true)}
+              >
+                <PlusIcon />
+              </button>
+            )}
           </div>
+
+          {!isCurrentTerm && (
+            <div className={styles.archiveNotice}>
+              <ArchiveIcon />
+              <span>Read-only archive</span>
+            </div>
+          )}
 
           <div className={styles.list}>
             {channels.map((ch) => (
@@ -135,7 +221,7 @@ export default function ChatSidebar({
           <div className={styles.list}>
             {conversations.map((conv) => {
               const color = getAvatarColor(conv.recipient?.id ?? "");
-              const online = onlineUsers?.has(conv.recipient?.id);
+              const recipientStatus = getRecipientStatus(conv.recipient?.id);
               return (
                 <button
                   key={conv.id}
@@ -154,7 +240,13 @@ export default function ChatSidebar({
                       <span className={styles.preview}>{conv.last_message}</span>
                     )}
                   </div>
-                  {online && <span className={styles.onlineDot} title="Online" />}
+                  {recipientStatus && (
+                    <span
+                      className={styles.onlineDot}
+                      style={{ background: STATUS_CONFIG[recipientStatus]?.color ?? "#4ade80" }}
+                      title={STATUS_CONFIG[recipientStatus]?.label ?? "Online"}
+                    />
+                  )}
                 </button>
               );
             })}
