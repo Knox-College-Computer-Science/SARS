@@ -219,7 +219,7 @@ export default function NotesPage() {
             </div>
           </div>
 
-          /* Inline PDF preview — Drive or local fallback */
+          {/* Inline PDF preview — Drive or local fallback */}
           {previewNote?.id === note.id && (
             <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
               <iframe
