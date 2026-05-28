@@ -67,7 +67,7 @@ function buildFeed(messages) {
   return items;
 }
 
-export default function ChatArea({ channelId, channelName, currentUser, memberCount }) {
+export default function ChatArea({ channelId, channelName, currentUser, memberCount, readOnly = false }) {
   const [messages,   setMessages]   = useState([]);
   const [input,      setInput]      = useState("");
   const [sending,    setSending]    = useState(false);
@@ -231,6 +231,7 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
   }
 
   const isAnnouncements = channelName === "announcements";
+  const isReadOnly = readOnly || isAnnouncements;
   const feed = buildFeed(messages);
 
   return (
@@ -266,9 +267,9 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
               isOwn={item.msg.senderId === currentUser?.id}
               currentUser={currentUser}
               compact={item.compact}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-              onReact={handleReact}
+              onEdit={isReadOnly ? undefined : handleEdit}
+              onDelete={isReadOnly ? undefined : handleDelete}
+              onReact={isReadOnly ? undefined : handleReact}
             />
           )
         )}
@@ -284,7 +285,11 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
         <div ref={bottomRef} />
       </div>
 
-      {isAnnouncements ? (
+      {readOnly ? (
+        <div className={styles.archiveBanner}>
+          <span>This is an archived course — messages are read-only.</span>
+        </div>
+      ) : isAnnouncements ? (
         <div className={styles.announcementBanner}>
           Only teachers can post in #announcements
         </div>

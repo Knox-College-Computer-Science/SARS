@@ -26,6 +26,7 @@ export default function ForumPage() {
   const [conversations, setConversations] = useState([]);
   const [activeView,    setActiveView]    = useState(null);
   const [onlineUsers,      setOnlineUsers]      = useState(new Set());
+  const [userStatuses,     setUserStatuses]     = useState({});
   const [loading,          setLoading]          = useState(true);
   const [error,            setError]            = useState(null);
   const [isGoogleConnected, setIsGoogleConnected] = useState(true);
@@ -45,7 +46,9 @@ export default function ForumPage() {
           const syncData = await syncClassroomCourses();
           t = syncData.token;
           user = syncData.user;
-          allCourses = syncData.courses ?? [];
+          allCourses = [...(syncData.courses ?? [])].sort(
+            (a, b) => (b.is_current_term ? 1 : 0) - (a.is_current_term ? 1 : 0)
+          );
         } else {
           setIsGoogleConnected(false);
           setLoading(false);
@@ -92,8 +95,15 @@ export default function ForumPage() {
     function onOnlineUsers(data) {
       setOnlineUsers(new Set(data.users));
     }
-    socket.on("online_users", onOnlineUsers);
-    return () => socket.off("online_users", onOnlineUsers);
+    function onUserStatuses(data) {
+      setUserStatuses(data.statuses ?? {});
+    }
+    socket.on("online_users",   onOnlineUsers);
+    socket.on("user_statuses",  onUserStatuses);
+    return () => {
+      socket.off("online_users",  onOnlineUsers);
+      socket.off("user_statuses", onUserStatuses);
+    };
   }, [currentUser]);
 
   const handleSelectChannel = useCallback((channel) => {
@@ -207,6 +217,7 @@ export default function ForumPage() {
         token={token}
         courseId={course?.school_course_id ?? COURSE_ID}
         onlineUsers={onlineUsers}
+        userStatuses={userStatuses}
       />
 
       <main className={styles.main}>
@@ -217,6 +228,7 @@ export default function ForumPage() {
             channelName={activeView.channelName}
             currentUser={currentUser}
             memberCount={course?.member_count ?? 0}
+            readOnly={course?.is_current_term === false}
           />
         )}
         {activeView?.type === "dm" && (

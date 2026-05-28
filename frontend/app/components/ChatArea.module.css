@@ -222,3 +222,18 @@
   flex-shrink: 0;
   letter-spacing: 0.01em;
 }
+
+/* ── Archive read-only banner ─────────────────────────────── */
+
+.archiveBanner {
+  padding: 12px 32px;
+  border-top: 1px solid rgba(255, 193, 7, 0.15);
+  background: rgba(255, 193, 7, 0.05);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 193, 7, 0.6);
+  text-align: center;
+  flex-shrink: 0;
+}
