@@ -10,6 +10,7 @@ import {
   editChannelMessage,
   deleteChannelMessage,
   reactToMessage,
+  uploadChannelFile,
   normaliseMessage,
 } from "@/lib/api";
 
@@ -19,6 +20,15 @@ function SendIcon() {
       stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="22" y1="2" x2="11" y2="13" />
       <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
     </svg>
   );
 }
@@ -71,11 +81,13 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
   const [messages,   setMessages]   = useState([]);
   const [input,      setInput]      = useState("");
   const [sending,    setSending]    = useState(false);
+  const [uploading,  setUploading]  = useState(false);
   const [typingUser, setTypingUser] = useState(null);
   const [connected,  setConnected]  = useState(false);
-  const bottomRef  = useRef(null);
-  const inputRef   = useRef(null);
-  const typingRef  = useRef(null);
+  const bottomRef   = useRef(null);
+  const inputRef    = useRef(null);
+  const typingRef   = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!socket.connected) socket.connect();
@@ -230,6 +242,22 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
     }
   }
 
+  async function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    setUploading(true);
+    try {
+      const saved = await uploadChannelFile(channelId, file, currentUser.id);
+      setMessages(prev => prev.find(m => m.id === saved.id) ? prev : [...prev, saved]);
+    } catch (err) {
+      console.error("File upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const isAnnouncements = channelName === "announcements";
   const isReadOnly = readOnly || isAnnouncements;
   const feed = buildFeed(messages);
@@ -295,6 +323,25 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
         </div>
       ) : (
         <div className={styles.composer}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: "none" }}
+            onChange={handleFileSelect}
+            accept="*/*"
+          />
+          <button
+            className={styles.attachBtn}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || sending}
+            title="Upload file to Notes"
+          >
+            {uploading ? (
+              <span className={styles.uploadingSpinner} />
+            ) : (
+              <PaperclipIcon />
+            )}
+          </button>
           <textarea
             ref={inputRef}
             className={styles.inputBox}

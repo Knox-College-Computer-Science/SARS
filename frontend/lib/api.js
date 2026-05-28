@@ -31,6 +31,7 @@ export function normaliseMessage(m) {
     editedAt:        m.edited_at        ?? null,
     replyToId:       m.reply_to_id      ?? null,
     reactions:       m.reactions        ?? {},
+    attachment:      m.attachment       ?? null,
   };
 }
 
@@ -116,6 +117,23 @@ export function reactToMessage(channelId, messageId, userId, emoji) {
     method: "POST",
     body: JSON.stringify({ user_id: userId, emoji }),
   }).then(normaliseMessage);
+}
+
+export async function uploadChannelFile(channelId, file, senderId) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("sender_id", senderId);
+
+  const res = await fetch(`${BASE}/channels/${channelId}/messages/upload`, {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Upload failed: ${res.status}`);
+  }
+  return normaliseMessage(await res.json());
 }
 
 export function createChannel(courseId, name, token) {

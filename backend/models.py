@@ -82,6 +82,19 @@ class ChannelMessage(Base):
     channel = relationship("Channel", back_populates="messages")
     sender = relationship("User", back_populates="messages")
     reactions = relationship("MessageReaction", back_populates="message", cascade="all, delete-orphan")
+    attachments = relationship("MessageAttachment", back_populates="message", cascade="all, delete-orphan")
+
+
+class MessageAttachment(Base):
+    __tablename__ = "message_attachments"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    message_id = Column(String, ForeignKey("channel_messages.id"), nullable=False)
+    filename = Column(String, nullable=False)
+    drive_file_id = Column(String, nullable=True)
+    drive_view_link = Column(String, nullable=True)
+
+    message = relationship("ChannelMessage", back_populates="attachments")
 
 
 class MessageReaction(Base):
