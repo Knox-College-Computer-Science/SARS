@@ -1,3 +1,6 @@
+import time
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
@@ -8,6 +11,32 @@ from models import Channel, Course, CourseEnrollment, User
 from security import create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+# In-memory OAuth state store (avoids cross-domain session cookie issues)
+_oauth_states: dict[str, float] = {}       # state -> created_at
+_session_handshakes: dict[str, dict] = {}  # token -> {data, ts}
+
+def _store_oauth_state(state: str):
+    _oauth_states[state] = time.time()
+    cutoff = time.time() - 600
+    for k in list(_oauth_states):
+        if _oauth_states[k] < cutoff:
+            del _oauth_states[k]
+
+def _verify_oauth_state(state: str) -> bool:
+    ts = _oauth_states.pop(state, None)
+    return ts is not None and (time.time() - ts) < 600
+
+def _create_handshake(data: dict) -> str:
+    token = secrets.token_urlsafe(32)
+    _session_handshakes[token] = {"data": data, "ts": time.time()}
+    return token
+
+def _consume_handshake(token: str):
+    entry = _session_handshakes.pop(token, None)
+    if entry is None or (time.time() - entry["ts"]) > 60:
+        return None
+    return entry["data"]
 
 def _get_initials(name: str) -> str:
     parts = name.strip().split()
@@ -41,18 +70,17 @@ def _simplify_user(user_info: dict) -> dict:
 
 def _simplify_courses(courses_data: dict) -> list:
     raw_courses = courses_data.get("courses", [])
-    active_courses = []
+    result = []
     for course in raw_courses:
-        if course.get("courseState") != "ACTIVE":
-            continue
-        active_courses.append({
+        result.append({
             "id": course.get("id"),
             "name": course.get("name"),
             "section": course.get("section"),
             "subject": course.get("subject"),
             "calendarId": course.get("calendarId"),
+            "courseState": course.get("courseState"),
         })
-    return active_courses
+    return result
 
 
 def _serialize_user(user: User) -> dict:
@@ -72,18 +100,20 @@ def _serialize_course(course: Course) -> dict:
         "course_code": course.course_code,
         "teacher_name": course.teacher_name,
         "term": course.term,
+        "is_active": course.is_active,
+        "is_current_term": course.is_active,
     }
 
 
 @router.get("/google/login")
 def google_login(request: Request):
-    from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
+    from app.config import GOOGLE_CLIENT_ID
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID in .env")
 
     from app.services.google_oauth import generate_state, build_google_auth_url
     state = generate_state()
-    request.session["oauth_state"] = state
+    _store_oauth_state(state)
     auth_url = build_google_auth_url(state)
     return RedirectResponse(url=auth_url)
 
@@ -99,8 +129,7 @@ def google_callback(
     if error:
         raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
 
-    saved_state = request.session.get("oauth_state")
-    if not saved_state or state != saved_state:
+    if not state or not _verify_oauth_state(state):
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
     if not code:
@@ -131,12 +160,26 @@ def google_callback(
     db_user = _upsert_user(db, email=cleaned_user["email"], name=cleaned_user["name"])
     nexus_token = create_access_token(db_user.id)
 
-    request.session["user"] = cleaned_user
-    request.session["access_token"] = access_token
-    request.session["nexus_token"] = nexus_token
-    request.session["nexus_user_id"] = db_user.id
+    from app.config import FRONTEND_URL
+    handshake = _create_handshake({
+        "user": cleaned_user,
+        "access_token": access_token,
+        "nexus_token": nexus_token,
+        "nexus_user_id": db_user.id,
+    })
+    return RedirectResponse(url=f"{FRONTEND_URL}/connect?session_token={handshake}&connected=true")
 
-    return RedirectResponse(url="http://localhost:3000/connect?connected=true")
+
+@router.get("/session/restore")
+def restore_session(request: Request, token: str):
+    data = _consume_handshake(token)
+    if not data:
+        raise HTTPException(status_code=400, detail="Invalid or expired session token")
+    request.session["user"] = data["user"]
+    request.session["access_token"] = data["access_token"]
+    request.session["nexus_token"] = data["nexus_token"]
+    request.session["nexus_user_id"] = data["nexus_user_id"]
+    return {"ok": True}
 
 
 @router.get("/google/me")
@@ -225,8 +268,9 @@ def school_launch(body: SchoolLaunchRequest, request: Request, db: Session = Dep
 
 @router.post("/sync-courses")
 def sync_courses(request: Request, db: Session = Depends(get_db)):
-    from app.routes.classroom import get_courses_from_google
-    from app.services.knox_calendar import get_current_knox_term
+    import requests as http_requests
+    from app.routes.classroom import get_current_term_window, is_current_term_course
+    from app.services.google_oauth import get_classroom_courses
 
     session_user = request.session.get("user")
     nexus_token = request.session.get("nexus_token")
@@ -251,17 +295,57 @@ def sync_courses(request: Request, db: Session = Depends(get_db)):
         request.session["nexus_token"] = nexus_token
         request.session["nexus_user_id"] = user_id
 
-    google_courses = get_courses_from_google(request)
-    current_term = get_current_knox_term() or "Spring 2026"
+    # Fetch ALL Google Classroom courses (active and archived), not just current-term
+    access_token = request.session.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not connected to Google Classroom")
+
+    try:
+        courses_data = get_classroom_courses(access_token)
+    except http_requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        request.session.pop("access_token", None)
+        if status_code == 401:
+            raise HTTPException(status_code=401, detail="Google Classroom connection expired. Please reconnect.")
+        raise HTTPException(status_code=500, detail="Failed to fetch Google Classroom courses")
+
+    raw_courses = courses_data.get("courses", [])
+    current_term_name, term_start, term_end = get_current_term_window()
 
     synced_courses = []
-    for google_course in google_courses:
-        google_course_id = google_course.get("id")
-        course_name = google_course.get("name", "")
-        section = google_course.get("section", "")
+    for google_course in raw_courses:
+        course_state = google_course.get("courseState", "")
+        # Only process ACTIVE and ARCHIVED; skip PROVISIONED / DECLINED / SUSPENDED
+        if course_state not in ("ACTIVE", "ARCHIVED"):
+            continue
 
+        google_course_id = google_course.get("id")
         if not google_course_id:
             continue
+
+        course_name = google_course.get("name", "")
+        section = google_course.get("section", "")
+        creation_time = google_course.get("creationTime", "")
+
+        # Archived courses are never current-term; for ACTIVE ones, check against Knox calendar
+        if course_state == "ARCHIVED":
+            is_current = False
+        elif current_term_name and term_start and term_end:
+            try:
+                is_current = is_current_term_course(
+                    google_course, access_token, current_term_name, term_start, term_end
+                )
+            except Exception:
+                is_current = False
+        else:
+            is_current = True  # No calendar info; assume current
+
+        if section:
+            term = section
+        elif creation_time:
+            term = creation_time[:4]
+        else:
+            term = current_term_name or "Unknown"
 
         course = db.query(Course).filter(Course.school_course_id == google_course_id).first()
         if not course:
@@ -270,16 +354,21 @@ def sync_courses(request: Request, db: Session = Depends(get_db)):
                 name=course_name,
                 course_code=section or google_course_id,
                 teacher_name="",
-                term=current_term,
+                term=term,
+                is_active=is_current,
             )
             db.add(course)
             db.flush()
             db.add(Channel(course_id=course.id, name="general", channel_type="general", position=0))
             db.add(Channel(course_id=course.id, name="announcements", channel_type="announcements", position=1))
             db.flush()
+        else:
+            # Refresh the is_active flag in case term status changed
+            course.is_active = is_current
 
         course_id = course.id
         course_data = _serialize_course(course)
+        course_data["is_current_term"] = is_current
 
         enrollment = (
             db.query(CourseEnrollment)

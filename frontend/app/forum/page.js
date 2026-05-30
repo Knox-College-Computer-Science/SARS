@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import ChatSidebar from "../components/ChatSidebar";
 import ChatArea from "../components/ChatArea";
 import DMArea from "../components/DMArea";
+import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 import {
-  schoolLaunch,
   syncClassroomCourses,
   fetchWorkspace,
   fetchConversations,
@@ -13,8 +13,6 @@ import {
 } from "@/lib/api";
 import socket from "@/lib/socket";
 import styles from "./page.module.css";
-
-const COURSE_ID = "CHEM101";
 
 export default function ForumPage() {
   const [currentUser,   setCurrentUser]   = useState(null);
@@ -24,9 +22,11 @@ export default function ForumPage() {
   const [channels,      setChannels]      = useState([]);
   const [conversations, setConversations] = useState([]);
   const [activeView,    setActiveView]    = useState(null);
-  const [onlineUsers,   setOnlineUsers]   = useState(new Set());
-  const [loading,       setLoading]       = useState(true);
-  const [error,         setError]         = useState(null);
+  const [onlineUsers,      setOnlineUsers]      = useState(new Set());
+  const [userStatuses,     setUserStatuses]     = useState({});
+  const [loading,          setLoading]          = useState(true);
+  const [error,            setError]            = useState(null);
+  const [isGoogleConnected, setIsGoogleConnected] = useState(true);
 
   useEffect(() => {
     async function init() {
@@ -34,8 +34,9 @@ export default function ForumPage() {
         let t, user, allCourses;
 
         let googleConnected = false;
+
         try {
-          const meRes = await fetch("http://localhost:8000/auth/google/me", { credentials: "include" });
+          const meRes = await fetch("/api/auth/google/me", { credentials: "include" });
           googleConnected = meRes.ok;
         } catch {}
 
@@ -43,19 +44,44 @@ export default function ForumPage() {
           const syncData = await syncClassroomCourses();
           t = syncData.token;
           user = syncData.user;
-          allCourses = syncData.courses ?? [];
+          allCourses = [...(syncData.courses ?? [])].sort(
+            (a, b) => (b.is_current_term ? 1 : 0) - (a.is_current_term ? 1 : 0)
+          );
         } else {
-          const auth = await schoolLaunch(COURSE_ID);
-          t = auth.token;
-          user = auth.user;
-          allCourses = auth.course ? [auth.course] : [];
+          setIsGoogleConnected(false);
+          setLoading(false);
+          return;
         }
+
+        if (!googleConnected) {
+          setIsConnected(false);
+          return;
+        }
+
+        setIsConnected(true);
+
+        const syncData = await syncClassroomCourses();
+        t = syncData.token;
+        user = syncData.user;
+        allCourses = syncData.courses ?? [];
 
         setCurrentUser(user);
         setToken(t);
         setCourses(allCourses);
 
-        const initialCourseId = allCourses[0]?.school_course_id ?? COURSE_ID;
+        if (allCourses.length === 0) {
+          setCurrentUser(user);
+          setToken(t);
+          setCourses([]);
+          setChannels([]);
+          setConversations([]);
+          setCourse(null);
+          setActiveView(null);
+          setNoCourses(true);
+          return;
+        }
+
+        const initialCourseId = allCourses[0].school_course_id;
 
         const [wsData, convData] = await Promise.all([
           fetchWorkspace(initialCourseId, t),
@@ -91,8 +117,15 @@ export default function ForumPage() {
     function onOnlineUsers(data) {
       setOnlineUsers(new Set(data.users));
     }
-    socket.on("online_users", onOnlineUsers);
-    return () => socket.off("online_users", onOnlineUsers);
+    function onUserStatuses(data) {
+      setUserStatuses(data.statuses ?? {});
+    }
+    socket.on("online_users",   onOnlineUsers);
+    socket.on("user_statuses",  onUserStatuses);
+    return () => {
+      socket.off("online_users",  onOnlineUsers);
+      socket.off("user_statuses", onUserStatuses);
+    };
   }, [currentUser]);
 
   const handleSelectChannel = useCallback((channel) => {
@@ -151,11 +184,60 @@ export default function ForumPage() {
     }
   }, [token]);
 
+  if (!isGoogleConnected) {
+    return (
+      <div className={styles.app}>
+        <main className={`${styles.main} ${styles.connectMain}`}>
+          <ConnectGoogleClassroomCard
+            message="Connect Google Classroom to access course channels and direct messages with your classmates."
+          />
+        </main>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className={styles.splash}>
         <div className={styles.splashLogo}>Discussion</div>
         <div className={styles.splashSub}>Connecting…</div>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="p-6 text-white">
+        <h1 className="text-3xl font-bold text-center mb-10">
+          💬 Discussion
+        </h1>
+
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <ConnectGoogleClassroomCard
+            message="Connect Google Classroom to access course-based discussion channels for your current classes."
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (noCourses) {
+    return (
+      <div className="p-6 text-white">
+        <h1 className="text-3xl font-bold text-center mb-10">
+          💬 Discussion
+        </h1>
+
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="w-full max-w-2xl min-h-[220px] bg-[#444654] rounded-xl p-8 shadow-lg flex flex-col justify-center">
+            <h2 className="text-2xl font-semibold mb-4">
+              No current courses found
+            </h2>
+            <p className="text-gray-300 leading-relaxed">
+              Google Classroom is connected, but no current-term courses were found for discussion channels.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -192,8 +274,9 @@ export default function ForumPage() {
         onSelectCourse={handleSelectCourse}
         currentUser={currentUser}
         token={token}
-        courseId={course?.school_course_id ?? COURSE_ID}
+        courseId={course?.school_course_id}
         onlineUsers={onlineUsers}
+        userStatuses={userStatuses}
       />
 
       <main className={styles.main}>
@@ -204,6 +287,7 @@ export default function ForumPage() {
             channelName={activeView.channelName}
             currentUser={currentUser}
             memberCount={course?.member_count ?? 0}
+            readOnly={course?.is_current_term === false}
           />
         )}
         {activeView?.type === "dm" && (
