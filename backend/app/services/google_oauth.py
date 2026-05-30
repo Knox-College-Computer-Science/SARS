@@ -1,4 +1,5 @@
 from urllib.parse import urlencode
+from datetime import date, datetime
 import secrets
 import requests
 
@@ -22,7 +23,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
     "https://www.googleapis.com/auth/drive.file",
 ]
-
 
 def generate_state() -> str:
     return secrets.token_urlsafe(32)
@@ -64,13 +64,41 @@ def get_user_info(access_token: str) -> dict:
 
 def get_classroom_courses(access_token: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
-    response = requests.get(
-        "https://classroom.googleapis.com/v1/courses",
-        headers=headers,
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    all_courses = []
+    page_token = None
+
+    while True:
+        params = {
+            "pageSize": 50,
+            "courseStates": ["ACTIVE", "ARCHIVED"],
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(
+            "https://classroom.googleapis.com/v1/courses",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        all_courses.extend(data.get("courses", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return {"courses": all_courses}
+
+def get_classroom_courses_for_upload_options(access_token: str) -> dict:
+    """
+    Returns all Google Classroom courses that can be used in the Upload Notes dropdown.
+
+    This includes both ACTIVE and ARCHIVED courses so the backend can split them into:
+    - current_courses
+    - past_courses
+    """
+    return get_classroom_courses(access_token)
 
 def get_course_announcements(access_token: str, course_id: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -131,6 +159,107 @@ def format_due_datetime(due_date: dict, due_time: dict) -> dict:
         "dueTime": due_time if due_time else None,
     }
 
+def parse_google_datetime(value: str):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def parse_google_due_date(due_date: dict):
+    if not due_date:
+        return None
+
+    try:
+        return date(
+            int(due_date["year"]),
+            int(due_date["month"]),
+            int(due_date["day"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def date_is_in_term(check_date, term_start: date, term_end: date) -> bool:
+    return check_date is not None and term_start <= check_date <= term_end
+
+
+def announcement_has_current_term_activity(
+    announcement: dict,
+    term_start: date,
+    term_end: date,
+) -> bool:
+    creation_date = parse_google_datetime(announcement.get("creationTime"))
+    update_date = parse_google_datetime(announcement.get("updateTime"))
+
+    return (
+        date_is_in_term(creation_date, term_start, term_end)
+        or date_is_in_term(update_date, term_start, term_end)
+    )
+
+
+def assignment_has_current_term_activity(
+    assignment: dict,
+    term_start: date,
+    term_end: date,
+) -> bool:
+    creation_date = parse_google_datetime(assignment.get("creationTime"))
+    update_date = parse_google_datetime(assignment.get("updateTime"))
+    due_date = parse_google_due_date(assignment.get("dueDate"))
+
+    return (
+        date_is_in_term(creation_date, term_start, term_end)
+        or date_is_in_term(update_date, term_start, term_end)
+        or date_is_in_term(due_date, term_start, term_end)
+    )
+
+
+def course_has_current_term_activity(
+    access_token: str,
+    course_id: str,
+    term_start: date,
+    term_end: date,
+) -> bool:
+    try:
+        announcements_data = get_course_announcements(access_token, course_id)
+        announcements = announcements_data.get("announcements", [])
+
+        for announcement in announcements:
+            if announcement_has_current_term_activity(
+                announcement,
+                term_start,
+                term_end,
+            ):
+                return True
+
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            raise
+    except Exception:
+        pass
+
+    try:
+        coursework_data = get_course_coursework(access_token, course_id)
+        assignments = coursework_data.get("courseWork", [])
+
+        for assignment in assignments:
+            if assignment_has_current_term_activity(
+                assignment,
+                term_start,
+                term_end,
+            ):
+                return True
+
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            raise
+    except Exception:
+        pass
+
+    return False
 
 def get_all_assignments_for_courses(access_token: str, courses: list) -> list:
     all_assignments = []
@@ -240,9 +369,52 @@ def get_all_materials_for_courses(access_token: str, courses: list) -> list:
 
     return all_courses_materials
 
+def get_or_create_sars_folder(access_token: str) -> str:
+    """
+    Returns the Drive folder ID for 'SARS App Notes'.
+    Creates the folder if it doesn't exist yet.
+    """
+    from googleapiclient.discovery import build
+    from google.oauth2.credentials import Credentials
 
-def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, subject: str) -> dict:
+    creds = Credentials(token=access_token)
+    service = build("drive", "v3", credentials=creds)
+
+    FOLDER_NAME = "SARS App Notes"
+
+    # Check if folder already exists so we don't create duplicates
+    results = service.files().list(
+        q=f"name='{FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+        fields="files(id, name)",
+        spaces="drive",
+    ).execute()
+
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]  # Folder already exists, reuse it
+
+    # Create the folder
+    folder_metadata = {
+        "name": FOLDER_NAME,
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+    folder = service.files().create(
+        body=folder_metadata,
+        fields="id",
+    ).execute()
+
+    return folder["id"]
+
+
+def upload_file_to_drive(
+    access_token: str,
+    file_bytes: bytes,
+    filename: str,
+    subject: str,
+    folder_id: str = None,       # ← new param
+) -> dict:
     import io
+    import mimetypes
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
     from google.oauth2.credentials import Credentials
@@ -255,7 +427,13 @@ def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, su
         "description": f"Class notes - {subject}",
     }
 
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/pdf")
+    # Place inside the SARS folder if we have one
+    if folder_id:
+        file_metadata["parents"] = [folder_id]
+
+    # Detect mimetype instead of hardcoding PDF
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime)
 
     uploaded = service.files().create(
         body=file_metadata,
@@ -263,6 +441,7 @@ def upload_file_to_drive(access_token: str, file_bytes: bytes, filename: str, su
         fields="id, name, webViewLink",
     ).execute()
 
+    # Make viewable by anyone with the link
     service.permissions().create(
         fileId=uploaded["id"],
         body={"type": "anyone", "role": "reader"},

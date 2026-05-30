@@ -2,85 +2,58 @@
 
 import { useEffect, useState } from "react";
 import UploadBox from "../components/UploadBox";
+import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 
 export default function UploadPage() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [checkingConnection, setCheckingConnection] = useState(true);
+  const [isConnected,       setIsConnected      ] = useState(false);
+  const [checkingConnection,setCheckingConnection] = useState(true);
 
-  useEffect(() => {
-    checkGoogleConnection();
-  }, []);
+  useEffect(() => { checkGoogleConnection(); }, []);
 
-  const checkGoogleConnection = async () => {
+  async function checkGoogleConnection() {
     setCheckingConnection(true);
-
     try {
-      const res = await fetch("http://localhost:8000/auth/google/me", {
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        setIsConnected(false);
-        return;
-      }
-
+      const res  = await fetch("/api/auth/google/me", { credentials: "include" });
+      if (!res.ok) { setIsConnected(false); return; }
       const data = await res.json();
-
-      if (data.user && data.has_access_token) {
-        setIsConnected(true);
-      } else {
-        setIsConnected(false);
-      }
+      setIsConnected(!!(data.user && data.has_access_token));
     } catch (err) {
-      console.error("Failed to check Google connection:", err);
+      console.error(err);
       setIsConnected(false);
     } finally {
       setCheckingConnection(false);
     }
-  };
-
-  const goToConnectPage = () => {
-    window.location.href = "/connect";
-  };
-
-  if (checkingConnection) {
-    return (
-      <div className="p-6 text-white">
-        <p className="text-gray-400">Checking Google Classroom connection...</p>
-      </div>
-    );
   }
 
-  if (!isConnected) {
+  // 1. Checking
+  if (checkingConnection) {
     return (
-      <div className="p-6 text-white">
-        <h1 className="text-2xl font-semibold mb-4">📤 Upload Notes</h1>
-
-        <div className="bg-[#2f3342] border border-gray-600 rounded-lg p-6 max-w-xl">
-          <h2 className="text-xl font-semibold mb-2">
-            Connect Google Classroom
-          </h2>
-
-          <p className="text-gray-300 mb-4">
-            Connect to Google Classroom before uploading notes so your notes can
-            be linked to your current classes.
-          </p>
-
-          <button
-            onClick={goToConnectPage}
-            className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            Go to Connect Page
-          </button>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-on-surface-variant">Checking connection…</p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="p-6 text-white">
-      <h1 className="text-2xl font-semibold mb-4">📤 Upload Notes</h1>
-      <UploadBox />
-    </div>
-  );
+  // 2. Not connected
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8 gap-6">
+        <div className="text-center">
+          <h1 className="font-display text-4xl font-bold text-on-surface tracking-tight">
+            Upload Notes
+          </h1>
+          <p className="text-sm text-on-surface-variant mt-2">
+            Connect Google Classroom to get started
+          </p>
+        </div>
+        <ConnectGoogleClassroomCard message="Connect Google Classroom before uploading notes so your notes can be linked to your current classes." />
+      </div>
+    );
+  }
+
+  // 3. Connected
+  return <UploadBox />;
 }

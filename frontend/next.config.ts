@@ -1,11 +1,15 @@
-import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  turbopack: {
-    root: path.resolve(__dirname),
-  },
   allowedDevOrigins: ["10.7.5.80"],
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${process.env.BACKEND_URL || "http://localhost:8000"}/:path*`,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

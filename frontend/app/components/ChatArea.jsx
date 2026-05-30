@@ -10,6 +10,7 @@ import {
   editChannelMessage,
   deleteChannelMessage,
   reactToMessage,
+  uploadChannelFile,
   normaliseMessage,
 } from "@/lib/api";
 
@@ -19,6 +20,15 @@ function SendIcon() {
       stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="22" y1="2" x2="11" y2="13" />
       <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
     </svg>
   );
 }
@@ -67,15 +77,17 @@ function buildFeed(messages) {
   return items;
 }
 
-export default function ChatArea({ channelId, channelName, currentUser, memberCount }) {
+export default function ChatArea({ channelId, channelName, currentUser, memberCount, readOnly = false }) {
   const [messages,   setMessages]   = useState([]);
   const [input,      setInput]      = useState("");
   const [sending,    setSending]    = useState(false);
+  const [uploading,  setUploading]  = useState(false);
   const [typingUser, setTypingUser] = useState(null);
   const [connected,  setConnected]  = useState(false);
-  const bottomRef  = useRef(null);
-  const inputRef   = useRef(null);
-  const typingRef  = useRef(null);
+  const bottomRef   = useRef(null);
+  const inputRef    = useRef(null);
+  const typingRef   = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!socket.connected) socket.connect();
@@ -98,8 +110,14 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
       .then(data => setMessages(data.messages))
       .catch(console.error);
 
-    socket.emit("join_channel", { channel_id: channelId });
-    return () => socket.emit("leave_channel", { channel_id: channelId });
+    const joinRoom = () => socket.emit("join_channel", { channel_id: channelId });
+    joinRoom();
+    socket.on("connect", joinRoom);
+
+    return () => {
+      socket.off("connect", joinRoom);
+      socket.emit("leave_channel", { channel_id: channelId });
+    };
   }, [channelId]);
 
   useEffect(() => {
@@ -184,7 +202,11 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
     setSending(true);
     try {
       const saved = await postChannelMessage(channelId, text, currentUser.id);
-      setMessages(prev => prev.map(m => m.id === tempId ? saved : m));
+      setMessages(prev => {
+        const mapped = prev.map(m => m.id === tempId ? saved : m);
+        const seen = new Set();
+        return mapped.filter(m => !seen.has(m.id) && seen.add(m.id));
+      });
     } catch (err) {
       console.error("Send failed:", err);
       setMessages(prev => prev.map(m => m.id === tempId ? { ...m, failed: true } : m));
@@ -220,7 +242,24 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
     }
   }
 
+  async function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    setUploading(true);
+    try {
+      const saved = await uploadChannelFile(channelId, file, currentUser.id);
+      setMessages(prev => prev.find(m => m.id === saved.id) ? prev : [...prev, saved]);
+    } catch (err) {
+      console.error("File upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const isAnnouncements = channelName === "announcements";
+  const isReadOnly = readOnly || isAnnouncements;
   const feed = buildFeed(messages);
 
   return (
@@ -231,7 +270,14 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
           <span className={styles.channelName}>{channelName}</span>
           <span className={styles.memberCount}>· {memberCount} members</span>
         </div>
-        {connected && <span className={styles.livePill}>● live</span>}
+        {connected && (
+          <span className={styles.livePill}>
+            <svg width="6" height="6" viewBox="0 0 6 6">
+              <circle cx="3" cy="3" r="3" fill="currentColor" />
+            </svg>
+            Live
+          </span>
+        )}
       </div>
 
       <div className={styles.feed}>
@@ -249,9 +295,9 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
               isOwn={item.msg.senderId === currentUser?.id}
               currentUser={currentUser}
               compact={item.compact}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-              onReact={handleReact}
+              onEdit={isReadOnly ? undefined : handleEdit}
+              onDelete={isReadOnly ? undefined : handleDelete}
+              onReact={isReadOnly ? undefined : handleReact}
             />
           )
         )}
@@ -267,12 +313,35 @@ export default function ChatArea({ channelId, channelName, currentUser, memberCo
         <div ref={bottomRef} />
       </div>
 
-      {isAnnouncements ? (
+      {readOnly ? (
+        <div className={styles.archiveBanner}>
+          <span>This is an archived course — messages are read-only.</span>
+        </div>
+      ) : isAnnouncements ? (
         <div className={styles.announcementBanner}>
           Only teachers can post in #announcements
         </div>
       ) : (
         <div className={styles.composer}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: "none" }}
+            onChange={handleFileSelect}
+            accept="*/*"
+          />
+          <button
+            className={styles.attachBtn}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || sending}
+            title="Upload file to Notes"
+          >
+            {uploading ? (
+              <span className={styles.uploadingSpinner} />
+            ) : (
+              <PaperclipIcon />
+            )}
+          </button>
           <textarea
             ref={inputRef}
             className={styles.inputBox}

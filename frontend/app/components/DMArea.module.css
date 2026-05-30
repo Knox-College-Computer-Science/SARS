@@ -1,10 +1,11 @@
 .recipientAvatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  border-radius: 3px;
   display: grid;
   place-items: center;
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   font-weight: 800;
+  letter-spacing: 0.04em;
   flex-shrink: 0;
 }

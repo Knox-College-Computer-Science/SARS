@@ -11,7 +11,7 @@ from app.routes.messages import router as messages_router
 from app.routes.conversations import router as conversations_router
 from app.routes.notes import router as notes_router
 from app.routes.rag import router as rag_router
-
+from app.routes.todos import router as todos_router
 from database import engine, Base, init_db
 import socketio
 from socket_manager import sio
@@ -24,7 +24,7 @@ app = FastAPI(title="SARS API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,7 +44,7 @@ app.include_router(messages_router, tags=["messages"])
 app.include_router(conversations_router, prefix="/conversations", tags=["conversations"])
 app.include_router(notes_router)
 app.include_router(rag_router)
-
+app.include_router(todos_router)
 
 @app.get("/")
 def root():

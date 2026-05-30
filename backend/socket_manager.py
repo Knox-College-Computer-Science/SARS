@@ -2,7 +2,7 @@ import socketio
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=["http://localhost:3000"],
+    cors_allowed_origins="*",
     logger=False,
     engineio_logger=False,
 )
@@ -10,6 +10,14 @@ sio = socketio.AsyncServer(
 # Maps user_id -> sid and sid -> user_id for presence tracking
 online_users: dict[str, str] = {}   # user_id -> sid
 sid_to_user:  dict[str, str] = {}   # sid -> user_id
+user_statuses: dict[str, str] = {}  # user_id -> "active" | "away" | "inactive"
+
+_VALID_STATUSES = {"active", "away", "inactive"}
+
+
+async def _broadcast_presence():
+    await sio.emit("online_users", {"users": list(online_users.keys())})
+    await sio.emit("user_statuses", {"statuses": dict(user_statuses)})
 
 
 @sio.event
@@ -23,7 +31,8 @@ async def disconnect(sid):
     user_id = sid_to_user.pop(sid, None)
     if user_id:
         online_users.pop(user_id, None)
-        await sio.emit("online_users", {"users": list(online_users.keys())})
+        user_statuses.pop(user_id, None)
+        await _broadcast_presence()
 
 
 @sio.event
@@ -32,7 +41,17 @@ async def user_auth(sid, data):
     if user_id:
         online_users[user_id] = sid
         sid_to_user[sid] = user_id
-    await sio.emit("online_users", {"users": list(online_users.keys())})
+        user_statuses.setdefault(user_id, "active")
+    await _broadcast_presence()
+
+
+@sio.event
+async def set_user_status(sid, data):
+    user_id = sid_to_user.get(sid)
+    status = data.get("status")
+    if user_id and status in _VALID_STATUSES:
+        user_statuses[user_id] = status
+        await _broadcast_presence()
 
 
 @sio.event
