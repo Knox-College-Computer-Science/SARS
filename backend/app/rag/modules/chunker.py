@@ -1,475 +1,283 @@
-
-from typing import List, Tuple
-
-import re
-import uuid
 import logging
-from datetime import datetime
-
-import numpy as np
+import re
+from typing import List, Tuple
 
 from app.rag.config import (
     CHUNK_MIN_CHARS,
-    CHUNK_SEMANTIC_TRIGGER,
-    SEMANTIC_BREAKPOINT_PCTILE,
-    IMAGE_MIN_CAPTION_CHARS,
+    CHUNK_MAX_CHARS,
+    CHUNK_OVERLAP_CHARS,
+    SLIDE_MERGE_THRESHOLD,
+    QUALITY_TIER_HIGH_MIN_CHARS,
+    QUALITY_TIER_HIGH_MIN_DIVERSITY,
+    QUALITY_TIER_MEDIUM_MIN_CHARS,
+    QUALITY_TIER_MEDIUM_MIN_DIVERSITY,
+    QUALITY_TIER_LOW_MIN_CHARS,
 )
-from app.rag.models import ExtractedElement, ParentChunk, RetrievalChunk
+from app.rag.models import ExtractedElement, ParentChunkData, RetrievalChunkData
 
-logger = logging.getLogger("sars.rag.chunker")
-
-_NO_TITLE = "Document"
+logger = logging.getLogger(__name__)
 
 
-# entry point
+### QUALITY ASSESSMENT ###
 
-def chunk_document(
-    elements:  List[ExtractedElement],
-    filename:  str,
-    file_id:   str,
-    course_id: str,
-    user_id:   str,
-    doc_type:  str = "structured",
-) -> Tuple[List[ParentChunk], List[RetrievalChunk]]:
+def assess_quality(elements: List[ExtractedElement]) -> dict:
+    text_elements = [e for e in elements if e.element_type in ("text", "title")]
+    if not text_elements:
+        return {"tier": "empty", "avg_chars": 0, "diversity": 0.0, "warnings": []}
 
-    if doc_type == "unstructured":
-        logger.info(f"Using page-based chunking for {filename} (doc_type=unstructured)")
-        return _chunk_by_page(elements, filename, file_id, course_id, user_id)
+    avg_chars = sum(len(e.text) for e in text_elements) / len(text_elements)
 
-    # doc_type == "structured": section-based parent-child chunking
-    # Step 1: Group elements by section (Title boundaries)
-    sections = _group_by_section(elements)
-
-    parents:   List[ParentChunk]   = []
-    retrieval: List[RetrievalChunk] = []
-    global_chunk_index = 0
-
-    for section_heading, section_elements in sections:
-        # Step 2: Build ParentChunk for this section
-        parent = _make_parent(
-            section_heading=section_heading,
-            elements=section_elements,
-            filename=filename,
-            file_id=file_id,
-            course_id=course_id,
-        )
-        parents.append(parent)
-
-        # Step 3: Separate text from atomic elements
-        text_elements   = [e for e in section_elements if e.element_type in ("text", "title")]
-        atomic_elements = [e for e in section_elements if e.element_type in ("table", "image")]
-
-        # Step 4: Create retrieval chunks from text elements
-        text_chunks = _chunk_text_elements(
-            elements        = text_elements,
-            parent          = parent,
-            filename        = filename,
-            file_id         = file_id,
-            course_id       = course_id,
-            user_id         = user_id,
-            start_index     = global_chunk_index,
-        )
-        retrieval.extend(text_chunks)
-        global_chunk_index += len(text_chunks)
-
-        # Step 5: Create one retrieval chunk per atomic element
-        atomic_chunks = _chunk_atomic_elements(
-            elements    = atomic_elements,
-            parent      = parent,
-            filename    = filename,
-            file_id     = file_id,
-            course_id   = course_id,
-            user_id     = user_id,
-            start_index = global_chunk_index,
-        )
-        retrieval.extend(atomic_chunks)
-        global_chunk_index += len(atomic_chunks)
-
-        # Step 6: Update parent with child IDs
-        child_ids = [c.chunk_id for c in text_chunks + atomic_chunks]
-        parent.child_chunk_ids.extend(child_ids)
-
-    logger.info(
-        f"Chunked {filename}: {len(parents)} parents, "
-        f"{len(retrieval)} retrieval chunks "
-        f"({sum(1 for c in retrieval if c.element_type == 'text')} text, "
-        f"{sum(1 for c in retrieval if c.element_type == 'table')} tables, "
-        f"{sum(1 for c in retrieval if c.element_type == 'image')} images)"
+    all_words = " ".join(e.text.lower() for e in text_elements).split()
+    diversity = (
+        len(set(all_words)) / len(all_words) if all_words else 0.0
     )
-    return parents, retrieval
+
+    warnings = []
+
+    if avg_chars >= QUALITY_TIER_HIGH_MIN_CHARS and diversity >= QUALITY_TIER_HIGH_MIN_DIVERSITY:
+        tier = "high"
+    elif avg_chars >= QUALITY_TIER_MEDIUM_MIN_CHARS and diversity >= QUALITY_TIER_MEDIUM_MIN_DIVERSITY:
+        tier = "medium"
+        warnings.append("Low text density — retrieval quality may be reduced")
+    elif avg_chars >= QUALITY_TIER_LOW_MIN_CHARS:
+        tier = "low"
+        warnings.append("Very low text density — consider re-uploading a higher quality version")
+    else:
+        tier = "empty"
+        warnings.append("Document appears to contain no extractable text")
+
+    return {
+        "tier":      tier,
+        "avg_chars": round(avg_chars, 1),
+        "diversity": round(diversity, 3),
+        "warnings":  warnings,
+    }
 
 
-# ── Section grouping ────────────────────────────────────────────
+### SPLITTING ###
 
-def _group_by_section(
-    elements: List[ExtractedElement],
-) -> List[Tuple[str, List[ExtractedElement]]]:
-    """
-    Group elements by their parent section (Title boundaries).
-    """
-    sections: List[Tuple[str, List[ExtractedElement]]] = []
-    current_heading = _NO_TITLE
-    current_group: List[ExtractedElement] = []
+def _split_text(text: str, max_chars: int, overlap: int) -> List[str]:
+    if len(text) <= max_chars:
+        return [text]
 
-    for elem in elements:
-        if elem.element_type == "title":
-            # Save the previous group (if non-empty)
-            if current_group:
-                sections.append((current_heading, current_group))
-            current_heading = elem.text
-            current_group = []
+    chunks = []
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    current = ""
+
+    for sentence in sentences:
+        if len(current) + len(sentence) + 1 <= max_chars:
+            current = f"{current} {sentence}".strip() if current else sentence
         else:
-            current_group.append(elem)
+            if current:
+                chunks.append(current)
+            if len(sentence) > max_chars:
+                for i in range(0, len(sentence), max_chars - overlap):
+                    chunks.append(sentence[i : i + max_chars])
+                current = ""
+            else:
+                current = sentence
 
-    if current_group:
-        sections.append((current_heading, current_group))
+    if current:
+        chunks.append(current)
 
-    # If document has no titles at all, we still have one section
-    if not sections and elements:
-        sections = [(_NO_TITLE, elements)]
-
-    return sections
+    return chunks if chunks else [text[:max_chars]]
 
 
-#  Parent chunk
+### PARENT + RETRIEVAL CHUNK BUILDERS ###
 
 def _make_parent(
-    section_heading: str,
     elements: List[ExtractedElement],
-    filename: str,
     file_id: str,
     course_id: str,
-) -> ParentChunk:
-    """
-    Build a ParentChunk from all elements in a section.
-    """
-    pages     = [e.page_number for e in elements if e.page_number]
-    page_min  = min(pages) if pages else 0
-    page_max  = max(pages) if pages else 0
-    full_text = " ".join(e.text for e in elements if e.text.strip())
+    filename: str,
+    section_heading: str,
+    parent_index: int,
+) -> ParentChunkData:
+    full_text = "\n\n".join(e.text for e in elements)
+    pages = [e.page_number for e in elements if e.page_number]
+    page_start = min(pages) if pages else 0
+    page_end = max(pages) if pages else 0
 
-    return ParentChunk(
-        parent_id       = str(uuid.uuid4()),
+    return ParentChunkData(
+        parent_id       = f"{file_id}_section_{parent_index}",
         text            = full_text,
         source_filename = filename,
         course_id       = course_id,
+        file_id         = file_id,
         section_heading = section_heading,
-        page_number     = page_min,
-        page_range      = (page_min, page_max),
-        child_chunk_ids = [],
-        created_at      = datetime.now().isoformat(),
+        page_number     = page_start,
+        page_range      = (page_start, page_end),
     )
 
 
-#  Text chunking
+def _make_retrieval_chunks(
+    parent: ParentChunkData,
+    elements: List[ExtractedElement],
+    file_id: str,
+    course_id: str,
+    user_id: str,
+    filename: str,
+    chunk_counter: int,
+) -> Tuple[List[RetrievalChunkData], int]:
+    chunks: List[RetrievalChunkData] = []
 
-def _chunk_text_elements(
-    elements:    List[ExtractedElement],
-    parent:      ParentChunk,
-    filename:    str,
-    file_id:     str,
-    course_id:   str,
-    user_id:     str,
-    start_index: int,
-) -> List[RetrievalChunk]:
-
-    if not elements:
-        return []
-
-    # Collect paragraphs (merge buffered small ones)
-    paragraphs = _merge_small_paragraphs(elements)
-
-    chunks: List[RetrievalChunk] = []
-    idx = start_index
-
-    for para_text, page_num in paragraphs:
-        if len(para_text) <= CHUNK_SEMANTIC_TRIGGER:
-            # Paragraph is a reasonable size — one chunk
-            chunks.append(_make_retrieval_chunk(
-                text            = para_text,
-                element_type    = "text",
-                page_number     = page_num,
+    for elem in elements:
+        if elem.element_type in ("table", "image"):
+            chunk = RetrievalChunkData(
+                chunk_id        = f"{file_id}_chunk_{chunk_counter}",
+                text            = elem.text,
+                element_type    = elem.element_type,
+                page_number     = elem.page_number,
                 section_heading = parent.section_heading,
-                chunk_index     = idx,
-                filename        = filename,
+                chunk_index     = len(chunks),
+                source_filename = filename,
                 file_id         = file_id,
                 course_id       = course_id,
                 user_id         = user_id,
                 parent_id       = parent.parent_id,
-            ))
-            idx += 1
-        else:
-            # Paragraph is large — split semantically
-            sub_texts = _semantic_split(para_text)
-            for sub_text in sub_texts:
-                if len(sub_text.strip()) < CHUNK_MIN_CHARS:
-                    continue  # Skip remnants below minimum size
-                chunks.append(_make_retrieval_chunk(
-                    text            = sub_text,
+                formatted_content = elem.formatted_content,
+            )
+            chunks.append(chunk)
+            chunk_counter += 1
+
+        elif elem.element_type in ("text", "title"):
+            splits = _split_text(elem.text, CHUNK_MAX_CHARS, CHUNK_OVERLAP_CHARS)
+            for split_text in splits:
+                if len(split_text.strip()) < CHUNK_MIN_CHARS:
+                    continue
+                chunk = RetrievalChunkData(
+                    chunk_id        = f"{file_id}_chunk_{chunk_counter}",
+                    text            = split_text,
                     element_type    = "text",
-                    page_number     = page_num,
+                    page_number     = elem.page_number,
                     section_heading = parent.section_heading,
-                    chunk_index     = idx,
-                    filename        = filename,
+                    chunk_index     = len(chunks),
+                    source_filename = filename,
                     file_id         = file_id,
                     course_id       = course_id,
                     user_id         = user_id,
                     parent_id       = parent.parent_id,
-                ))
-                idx += 1
+                )
+                chunks.append(chunk)
+                chunk_counter += 1
 
-    return chunks
+    return chunks, chunk_counter
 
 
-def _merge_small_paragraphs(
-    elements: List[ExtractedElement],
-) -> List[Tuple[str, int]]:
+### SLIDE-AWARE GROUPING ###
 
-    result:  List[Tuple[str, int]] = []
-    buffer:  List[str]             = []
-    buf_page: int                  = 0
+def _group_slides(elements: List[ExtractedElement]) -> List[List[ExtractedElement]]:
+    slides: List[List[ExtractedElement]] = []
+    current: List[ExtractedElement] = []
 
     for elem in elements:
-        text = elem.text.strip()
-        if not text:
-            continue
-
-        if len(text) < CHUNK_MIN_CHARS:
-            # Too small — add to buffer
-            if not buffer:
-                buf_page = elem.page_number
-            buffer.append(text)
+        if elem.element_type == "title" and current:
+            slides.append(current)
+            current = [elem]
         else:
-            # Flush buffer into current element if non-empty
-            if buffer:
-                combined = " ".join(buffer) + " " + text
-                result.append((combined.strip(), buf_page))
-                buffer = []
-            else:
-                result.append((text, elem.page_number))
+            current.append(elem)
 
-    # Flush any remaining buffer
+    if current:
+        slides.append(current)
+
+    merged: List[List[ExtractedElement]] = []
+    buffer: List[ExtractedElement] = []
+
+    for slide in slides:
+        slide_text = " ".join(e.text for e in slide)
+        buffer.extend(slide)
+        if len(slide_text) >= SLIDE_MERGE_THRESHOLD:
+            merged.append(buffer)
+            buffer = []
+
     if buffer:
-        result.append((" ".join(buffer).strip(), buf_page))
+        merged.append(buffer)
 
-    return result
-
-
-# ── Semantic splitting ───────────────────────────────────────────
-
-def _semantic_split(text: str) -> List[str]:
-
-    from app.rag.modules.embedder import embed_texts
-
-    sentences = _split_sentences(text)
-    if len(sentences) <= 2:
-        return [text]   # Too short to bother splitting
-
-    try:
-        embeddings = embed_texts(sentences)
-    except Exception as e:
-        logger.warning(f"Semantic split embedding failed, keeping paragraph whole: {e}")
-        return [text]
-
-    # Compute cosine distances between consecutive sentences
-    distances = []
-    for i in range(len(embeddings) - 1):
-        distances.append(_cosine_distance(embeddings[i], embeddings[i + 1]))
-
-    if not distances:
-        return [text]
-
-    threshold = float(np.percentile(distances, SEMANTIC_BREAKPOINT_PCTILE))
-
-    # Build groups of sentences separated at breakpoints
-    groups: List[List[str]] = [[sentences[0]]]
-    for i, dist in enumerate(distances):
-        if dist > threshold:
-            groups.append([sentences[i + 1]])
-        else:
-            groups[-1].append(sentences[i + 1])
-
-    return [" ".join(g) for g in groups if g]
+    return merged
 
 
-def _split_sentences(text: str) -> List[str]:
+### SECTION GROUPING ###
 
-    # Protect abbreviations
-    text = re.sub(
-        r"\b(Dr|Mr|Mrs|Ms|Prof|Sr|Jr|e\.g|i\.e|etc|vs|approx|Fig|fig|Eq|eq)\.",
-        r"\1<DOT>",
-        text,
-    )
-    # Split on sentence-ending punctuation
-    sentences = re.split(r"(?<=[.!?])\s+|\n{2,}", text)
-    # Restore protected dots and filter tiny fragments
-    return [
-        s.replace("<DOT>", ".").strip()
-        for s in sentences
-        if len(s.strip()) > 10
-    ]
-
-
-def _cosine_distance(v1: List[float], v2: List[float]) -> float:
-    a, b = np.array(v1), np.array(v2)
-    norm = np.linalg.norm(a) * np.linalg.norm(b)
-    if norm == 0:
-        return 1.0
-    return float(1.0 - np.dot(a, b) / norm)
-
-
-#  Atomic element chunking
-
-def _chunk_atomic_elements(
-    elements:    List[ExtractedElement],
-    parent:      ParentChunk,
-    filename:    str,
-    file_id:     str,
-    course_id:   str,
-    user_id:     str,
-    start_index: int,
-) -> List[RetrievalChunk]:
-
-    chunks: List[RetrievalChunk] = []
-    idx = start_index
+def _group_by_section(elements: List[ExtractedElement]) -> List[List[ExtractedElement]]:
+    sections: List[List[ExtractedElement]] = []
+    current: List[ExtractedElement] = []
 
     for elem in elements:
-        if elem.element_type == "table":
-            embed_text = elem.text  # Flat text — good for semantic search
-            chunks.append(_make_retrieval_chunk(
-                text              = embed_text,
-                element_type      = "table",
-                page_number       = elem.page_number,
-                section_heading   = parent.section_heading,
-                chunk_index       = idx,
-                filename          = filename,
-                file_id           = file_id,
-                course_id         = course_id,
-                user_id           = user_id,
-                parent_id         = parent.parent_id,
-                formatted_content = elem.formatted_content,
-            ))
-            idx += 1
+        if elem.element_type == "title" and current:
+            sections.append(current)
+            current = [elem]
+        else:
+            current.append(elem)
 
-        elif elem.element_type == "image":
-            caption = elem.text
-            if len(caption) < IMAGE_MIN_CAPTION_CHARS:
-                # Caption too short — not useful to index
-                logger.debug(f"Skipping image (caption too short): {caption!r}")
-                continue
-            chunks.append(_make_retrieval_chunk(
-                text            = caption,
-                element_type    = "image",
-                page_number     = elem.page_number,
-                section_heading = parent.section_heading,
-                chunk_index     = idx,
-                filename        = filename,
-                file_id         = file_id,
-                course_id       = course_id,
-                user_id         = user_id,
-                parent_id       = parent.parent_id,
-            ))
-            idx += 1
+    if current:
+        sections.append(current)
 
-    return chunks
+    return sections if sections else [elements]
 
 
-#  RetrievalChunk
+### PUBLIC API ###
 
-def _make_retrieval_chunk(
-    text:              str,
-    element_type:      str,
-    page_number:       int,
-    section_heading:   str,
-    chunk_index:       int,
-    filename:          str,
-    file_id:           str,
-    course_id:         str,
-    user_id:           str,
-    parent_id:         str,
-    formatted_content: str = "",
-) -> RetrievalChunk:
-    return RetrievalChunk(
-        chunk_id          = str(uuid.uuid4()),
-        text              = text.strip(),
-        element_type      = element_type,
-        page_number       = page_number,
-        section_heading   = section_heading,
-        chunk_index       = chunk_index,
-        source_filename   = filename,
-        file_id           = file_id,
-        course_id         = course_id,
-        user_id           = user_id,
-        parent_id         = parent_id,
-        formatted_content = formatted_content,
-        created_at        = datetime.now().isoformat(),
-        embedder_version  = "nomic-embed-text-v1",
+def chunk(
+    elements: List[ExtractedElement],
+    file_id: str,
+    course_id: str,
+    user_id: str,
+    filename: str,
+    is_slides: bool = False,
+) -> Tuple[List[ParentChunkData], List[RetrievalChunkData]]:
+    if not elements:
+        return [], []
+
+    quality = assess_quality(elements)
+    if quality["tier"] == "empty":
+        logger.warning(f"Empty document: {filename}")
+        return [], []
+
+    logger.info(
+        f"Chunking {filename} | quality={quality['tier']} "
+        f"avg_chars={quality['avg_chars']} diversity={quality['diversity']}"
     )
 
-# ── Page-based chunking (for unstructured documents / slides) ───
+    groups = _group_slides(elements) if is_slides else _group_by_section(elements)
 
-def _chunk_by_page(
-    elements:  List[ExtractedElement],
-    filename:  str,
-    file_id:   str,
-    course_id: str,
-    user_id:   str,
-) -> Tuple[List[ParentChunk], List[RetrievalChunk]]:
+    parents: List[ParentChunkData] = []
+    retrieval_chunks: List[RetrievalChunkData] = []
+    chunk_counter = 0
 
-    from itertools import groupby
+    for i, group in enumerate(groups):
+        heading = next(
+            (e.text for e in group if e.element_type == "title"),
+            f"Section {i + 1}",
+        )
 
-    parents:   List[ParentChunk]    = []
-    retrieval: List[RetrievalChunk] = []
-    global_index = 0
+        parent = _make_parent(
+            elements       = group,
+            file_id        = file_id,
+            course_id      = course_id,
+            filename       = filename,
+            section_heading = heading,
+            parent_index   = i,
+        )
 
-    # Group elements by page number
-    sorted_elements = sorted(elements, key=lambda e: e.page_number)
-    for page_num, page_elements in groupby(sorted_elements, key=lambda e: e.page_number):
-        page_elements = list(page_elements)
+        r_chunks, chunk_counter = _make_retrieval_chunks(
+            parent        = parent,
+            elements      = group,
+            file_id       = file_id,
+            course_id     = course_id,
+            user_id       = user_id,
+            filename      = filename,
+            chunk_counter = chunk_counter,
+        )
 
-        # Parent = full text of this page
-        full_text = " ".join(e.text for e in page_elements if e.text.strip())
-        if not full_text.strip():
+        if not r_chunks:
             continue
 
-        parent = ParentChunk(
-            parent_id       = str(uuid.uuid4()),
-            text            = full_text,
-            source_filename = filename,
-            course_id       = course_id,
-            section_heading = f"Page {page_num}",
-            page_number     = page_num,
-            page_range      = (page_num, page_num),
-            child_chunk_ids = [],
-            created_at      = datetime.now().isoformat(),
-        )
+        parent.child_chunk_ids = [c.chunk_id for c in r_chunks]
         parents.append(parent)
+        retrieval_chunks.extend(r_chunks)
 
-        # One retrieval chunk per element on this page
-        for elem in page_elements:
-            if not elem.text.strip():
-                continue
-            if elem.element_type in _SKIP_TYPES:
-                continue
-
-            chunk = _make_retrieval_chunk(
-                text              = elem.text,
-                element_type      = elem.element_type,
-                page_number       = page_num,
-                section_heading   = f"Page {page_num}",
-                chunk_index       = global_index,
-                filename          = filename,
-                file_id           = file_id,
-                course_id         = course_id,
-                user_id           = user_id,
-                parent_id         = parent.parent_id,
-                formatted_content = getattr(elem, "formatted_content", ""),
-            )
-            parent.child_chunk_ids.append(chunk.chunk_id)
-            retrieval.append(chunk)
-            global_index += 1
-
-    return parents, retrieval
-
-# Types to skip in page-based chunking
-_SKIP_TYPES = {"title"}  # Titles become section_heading, not separate chunks
+    logger.info(
+        f"Produced {len(parents)} parent chunks and "
+        f"{len(retrieval_chunks)} retrieval chunks from {filename}"
+    )
+    return parents, retrieval_chunks

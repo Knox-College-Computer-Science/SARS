@@ -1,86 +1,191 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+import json
+import logging
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Form
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from app.services.rag_service import (
-    save_uploaded_file,
-    stream_chat_answer,
-    get_chat_answer,
-    list_course_files,
-    delete_course_file,
-    get_file_status,
-)
+from database import get_db
+from app.rag.pipeline import ingest, query, list_course_files, delete_course_file, get_file_status
 
-router = APIRouter(prefix="/rag", tags=["rag"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/rag", tags=["rag"])
 
 
-class ChatRequest(BaseModel):
-    question: str
-    course_id: str
-    conversation_history: list = []
+### AUTH HELPER ###
 
+def _user_id(request: Request) -> str:
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user_id
+
+
+### UPLOAD ###
 
 @router.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
-    course_id: str = Query(...),
-    use_ocr: bool = Query(False),
+    course_id: str = Form(...),
+    db: Session = Depends(get_db),
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Please upload a PDF file")
+    if not course_id:
+        raise HTTPException(status_code=400, detail="course_id required")
 
-    result = await save_uploaded_file(file, course_id, use_ocr=use_ocr)
-    return {
-        "message": f"Processed {result['file_name']}",
-        "file": result,
-    }
+    user_id = _user_id(request)
+
+    try:
+        file_bytes = await file.read()
+
+        result = ingest(
+            db         = db,
+            file_bytes = file_bytes,
+            filename   = file.filename or "unknown",
+            course_id  = course_id,
+            user_id    = user_id,
+        )
+
+        if result.status == "duplicate":
+            return {
+                "status":   "duplicate",
+                "filename": result.filename,
+                "message":  "This file has already been indexed",
+            }
+
+        if result.status == "error":
+            return {
+                "status":   "error",
+                "filename": result.filename,
+                "error":    result.error or "Unknown error",
+            }
+
+        return {
+            "status":           "success",
+            "file_id":          result.file_id,
+            "filename":         result.filename,
+            "retrieval_chunks": result.retrieval_chunks,
+            "parent_chunks":    result.parent_chunks,
+            "text_chunks":      result.text_chunks,
+            "table_chunks":     result.table_chunks,
+            "image_chunks":     result.image_chunks,
+        }
+
+    except Exception as e:
+        logger.error(f"Upload failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/chat/stream")
-async def chat_stream(
-    query: str = Query(...),
-    course_id: str = Query(...),
-):
-    return StreamingResponse(
-        stream_chat_answer(query, course_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
+### CHAT ###
 
 @router.post("/chat")
-async def chat(payload: ChatRequest):
-    if not payload.question.strip():
-        raise HTTPException(status_code=400, detail="Question cannot be empty")
-    return get_chat_answer(
-        payload.question,
-        payload.course_id,
-        payload.conversation_history,
-    )
+async def chat(
+    request: Request,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    user_id     = _user_id(request)
+    query_text  = body.get("query", "").strip()
+    course_id   = body.get("course_id", "").strip()
+    course_name = body.get("course_name", "Unknown Course")
+    history     = body.get("history", [])
+
+    if not query_text:
+        raise HTTPException(status_code=400, detail="query required")
+    if not course_id:
+        raise HTTPException(status_code=400, detail="course_id required")
+
+    async def event_stream():
+        try:
+            async for event in query(
+                db          = db,
+                user_query  = query_text,
+                course_id   = course_id,
+                user_id     = user_id,
+                course_name = course_name,
+                history     = history,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Chat stream failed: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@router.get("/files/{course_id}")
-async def list_files(course_id: str):
-    files = list_course_files(course_id)
-    return {"files": files, "course_id": course_id}
+### FILE MANAGEMENT ###
+
+@router.get("/files")
+async def list_files(
+    request: Request,
+    course_id: str = None,
+    db: Session = Depends(get_db),
+):
+    if not course_id:
+        raise HTTPException(status_code=400, detail="course_id required")
+
+    _user_id(request)
+
+    try:
+        files = list_course_files(db, course_id)
+        return {"status": "success", "files": files}
+    except Exception as e:
+        logger.error(f"List files failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/files/{course_id}/{file_id}")
-async def delete_file(course_id: str, file_id: str):
-    deleted_count = delete_course_file(course_id, file_id)
-    return {
-        "deleted_chunks": deleted_count,
-        "course_id": course_id,
-        "file_id": file_id,
-    }
+@router.delete("/files/{file_id}")
+async def delete_file(
+    file_id: str,
+    request: Request,
+    course_id: str = None,
+    db: Session = Depends(get_db),
+):
+    if not course_id:
+        raise HTTPException(status_code=400, detail="course_id required")
+
+    _user_id(request)
+
+    try:
+        deleted = delete_course_file(db, file_id, course_id)
+        return {
+            "status":         "success",
+            "file_id":        file_id,
+            "deleted_chunks": deleted,
+        }
+    except Exception as e:
+        logger.error(f"Delete file failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/status/{file_id}")
-async def get_status(file_id: str):
-    status = get_file_status(file_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail=f"No status found for file_id={file_id}")
-    return status
+@router.get("/files/{file_id}/status")
+async def file_status(
+    file_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    _user_id(request)
+
+    try:
+        status = get_file_status(db, file_id)
+        if status.get("status") == "not_found":
+            raise HTTPException(status_code=404, detail="File not found")
+        return {"status": "success", "file": status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File status failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+### HEALTH ###
+
+@router.get("/health")
+async def health(db: Session = Depends(get_db)):
+    try:
+        db.execute("SELECT 1")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Database connection failed")

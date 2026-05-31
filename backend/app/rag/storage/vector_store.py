@@ -1,211 +1,271 @@
-import re
-import hashlib
+import json
 import logging
-from typing import Optional
+import math
+from typing import List, Optional, Tuple
 
-import chromadb
-from chromadb.config import Settings
+from sqlalchemy.orm import Session
 
-from app.rag.config import CHROMA_DIR, COLLECTION_PREFIX, TOP_K_VECTOR
+from app.rag.models import (
+    ParentChunkData,
+    RAGFile,
+    RetrievalChunk,
+    RetrievalChunkData,
+    ParentChunk,
+    RetrievedResult,
+)
+from app.rag.config import VECTOR_SEARCH_TOP_K
 
-logger = logging.getLogger("nexus.rag.vector_store")
-
-
-# ── Singletons ──────────────────────────────────────────────────
-# One ChromaDB client shared across the process.
-# Collections are created on first access and cached.
-
-_client: Optional[chromadb.PersistentClient] = None
-_collections: dict[str, chromadb.Collection] = {}
-
-
-def _get_client() -> chromadb.PersistentClient:
-    global _client
-    if _client is None:
-        _client = chromadb.PersistentClient(
-            path=str(CHROMA_DIR),
-            settings=Settings(anonymized_telemetry=False),
-        )
-        logger.info(f"ChromaDB client initialised at {CHROMA_DIR}")
-    return _client
+logger = logging.getLogger(__name__)
 
 
-def _collection_name(course_id: str) -> str:
+### SIMILARITY ###
 
-    sanitised = re.sub(r"[^a-zA-Z0-9_-]", "_", course_id).strip("_-")
-    name = f"{COLLECTION_PREFIX}{sanitised}"
-
-    if len(name) < 3:
-        name = name + "_col"
-
-    if len(name) > 63:
-        hashed = hashlib.md5(course_id.encode()).hexdigest()[:16]
-        name = f"{COLLECTION_PREFIX}{hashed}"
-
-    return name
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    dot    = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
-def get_course_collection(course_id: str) -> chromadb.Collection:
-
-    if course_id not in _collections:
-        client = _get_client()
-        name = _collection_name(course_id)
-        _collections[course_id] = client.get_or_create_collection(
-            name=name,
-            metadata={"course_id": course_id},
-        )
-        logger.debug(f"Collection ready: {name}")
-    return _collections[course_id]
+def _is_postgres(db: Session) -> bool:
+    return "postgresql" in str(db.bind.url)
 
 
-# ── Write operations ────────────────────────────────────────────
+### WRITE ###
 
-def upsert_chunks(
+def save_chunks(
+    db: Session,
+    retrieval_chunks: List[RetrievalChunkData],
+    parent_chunks: List[ParentChunkData],
+    embeddings: List[List[float]],
+    file_id: str,
     course_id: str,
-    ids: list[str],
-    embeddings: list[list[float]],
-    documents: list[str],
-    metadatas: list[dict],
 ) -> None:
-
-    if not ids:
-        return
-    collection = get_course_collection(course_id)
-    collection.upsert(
-        ids=ids,
-        embeddings=embeddings,
-        documents=documents,
-        metadatas=metadatas,
-    )
-    logger.debug(f"Upserted {len(ids)} chunks into course {course_id}")
-
-
-def delete_by_file_id(course_id: str, file_id: str) -> int:
-
-    collection = get_course_collection(course_id)
-    if collection.count() == 0:
-        return 0
-
-    all_data = collection.get(include=["metadatas"])
-    ids_to_delete = [
-        all_data["ids"][i]
-        for i, meta in enumerate(all_data["metadatas"])
-        if meta.get("file_id") == file_id
-    ]
-
-    if ids_to_delete:
-        collection.delete(ids=ids_to_delete)
-        logger.info(f"Deleted {len(ids_to_delete)} chunks for file_id={file_id}")
-
-    return len(ids_to_delete)
-
-
-def delete_course(course_id: str) -> bool:
-    """Delete the entire collection for a course."""
-    try:
-        client = _get_client()
-        name = _collection_name(course_id)
-        client.delete_collection(name)
-        _collections.pop(course_id, None)
-        logger.info(f"Deleted collection for course {course_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to delete collection for course {course_id}: {e}")
-        return False
-
-
-# ── Read operations ─────────────────────────────────────────────
-
-def query_collection(
-    course_id: str,
-    query_embedding: list[float],
-    n_results: int = TOP_K_VECTOR,
-) -> list[dict]:
-
-    collection = get_course_collection(course_id)
-    count = collection.count()
-    if count == 0:
-        return []
-
-    actual_n = min(n_results, count)
-    try:
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=actual_n,
-            include=["documents", "metadatas", "distances"],
+    if len(retrieval_chunks) != len(embeddings):
+        raise ValueError(
+            f"Chunk count ({len(retrieval_chunks)}) != "
+            f"embedding count ({len(embeddings)})"
         )
-    except Exception as e:
-        logger.error(f"ChromaDB query failed for course {course_id}: {e}")
-        return []
 
-    output = []
-    docs      = results["documents"][0]
-    metas     = results["metadatas"][0]
-    distances = results["distances"][0]
-    ids       = results["ids"][0]
+    for parent_data in parent_chunks:
+        existing = (
+            db.query(ParentChunk)
+            .filter(ParentChunk.parent_id == parent_data.parent_id)
+            .first()
+        )
+        if existing:
+            continue
 
-    for i in range(len(docs)):
-        distance = distances[i]
-        # Convert L2 distance to a similarity score in (0, 1]
-        score = 1.0 / (1.0 + distance)
-        output.append({
-            "id":       ids[i],
-            "document": docs[i],
-            "metadata": metas[i],
-            "distance": distance,
-            "score":    score,
-        })
+        db.add(ParentChunk(
+            parent_id        = parent_data.parent_id,
+            course_id        = course_id,
+            file_id          = file_id,
+            section_heading  = parent_data.section_heading,
+            page_number      = parent_data.page_number,
+            page_range_start = parent_data.page_range[0],
+            page_range_end   = parent_data.page_range[1],
+            source_filename  = parent_data.source_filename,
+            text             = parent_data.text,
+            child_chunk_ids  = parent_data.child_chunk_ids,
+        ))
 
-    return output
+    for chunk_data, embedding in zip(retrieval_chunks, embeddings):
+        existing = (
+            db.query(RetrievalChunk)
+            .filter(RetrievalChunk.chunk_id == chunk_data.chunk_id)
+            .first()
+        )
+        if existing:
+            existing.embedding = embedding
+            continue
+
+        db.add(RetrievalChunk(
+            chunk_id          = chunk_data.chunk_id,
+            course_id         = course_id,
+            user_id           = chunk_data.user_id,
+            file_id           = file_id,
+            parent_id         = chunk_data.parent_id,
+            chunk_index       = chunk_data.chunk_index,
+            element_type      = chunk_data.element_type,
+            page_number       = chunk_data.page_number,
+            section_heading   = chunk_data.section_heading,
+            source_filename   = chunk_data.source_filename,
+            text              = chunk_data.text,
+            formatted_content = chunk_data.formatted_content,
+            embedding         = embedding,
+        ))
+
+    db.commit()
+    logger.info(
+        f"Saved {len(parent_chunks)} parent chunks and "
+        f"{len(retrieval_chunks)} retrieval chunks for file {file_id}"
+    )
 
 
-def get_all_documents(course_id: str) -> list[dict]:
+### READ ###
 
-    collection = get_course_collection(course_id)
-    if collection.count() == 0:
-        return []
-
-    all_data = collection.get(include=["documents", "metadatas"])
-    output = []
-    for i, doc in enumerate(all_data["documents"]):
-        output.append({
-            "id":       all_data["ids"][i],
-            "document": doc,
-            "metadata": all_data["metadatas"][i],
-        })
-    return output
+def search_vectors(
+    db: Session,
+    query_embedding: List[float],
+    course_id: str,
+    top_k: int = VECTOR_SEARCH_TOP_K,
+) -> List[Tuple[RetrievalChunkData, float]]:
+    if _is_postgres(db):
+        return _search_pgvector(db, query_embedding, course_id, top_k)
+    return _search_sqlite(db, query_embedding, course_id, top_k)
 
 
-def get_collection_stats(course_id: str) -> dict:
-    """Return basic stats about a course's collection."""
-    collection = get_course_collection(course_id)
-    count = collection.count()
-    if count == 0:
-        return {"course_id": course_id, "total_chunks": 0}
+def _search_pgvector(
+    db: Session,
+    query_embedding: List[float],
+    course_id: str,
+    top_k: int,
+) -> List[Tuple[RetrievalChunkData, float]]:
+    from sqlalchemy import text
 
-    all_data = collection.get(include=["metadatas"])
+    vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
-    files: dict[str, dict] = {}
-    for meta in all_data["metadatas"]:
-        fname = meta.get("source_filename", "unknown")
-        if fname not in files:
-            files[fname] = {
-                "filename":      fname,
-                "file_id":       meta.get("file_id", ""),
-                "chunk_count":   0,
-                "element_types": set(),
-            }
-        files[fname]["chunk_count"] += 1
-        files[fname]["element_types"].add(meta.get("element_type", "text"))
+    rows = db.execute(
+        text("""
+            SELECT
+                chunk_id, course_id, user_id, file_id, parent_id,
+                chunk_index, element_type, page_number, section_heading,
+                source_filename, text, formatted_content,
+                1 - (embedding <=> :query_vec::vector) AS score
+            FROM retrieval_chunks
+            WHERE course_id = :course_id
+            ORDER BY embedding <=> :query_vec::vector
+            LIMIT :top_k
+        """),
+        {"query_vec": vector_str, "course_id": course_id, "top_k": top_k},
+    ).fetchall()
 
-    file_list = []
-    for info in files.values():
-        info["element_types"] = sorted(info["element_types"])
-        file_list.append(info)
+    return [(_row_to_chunk(row), float(row.score)) for row in rows]
 
-    return {
-        "course_id":   course_id,
-        "total_chunks": count,
-        "total_files":  len(file_list),
-        "files":        sorted(file_list, key=lambda f: f["filename"]),
-    }
+
+def _search_sqlite(
+    db: Session,
+    query_embedding: List[float],
+    course_id: str,
+    top_k: int,
+) -> List[Tuple[RetrievalChunkData, float]]:
+    rows = (
+        db.query(RetrievalChunk)
+        .filter(RetrievalChunk.course_id == course_id)
+        .filter(RetrievalChunk.embedding.isnot(None))
+        .all()
+    )
+
+    scored = []
+    for row in rows:
+        embedding = row.embedding
+        if isinstance(embedding, str):
+            embedding = json.loads(embedding)
+        score = _cosine_similarity(query_embedding, embedding)
+        scored.append((_orm_to_chunk(row), score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:top_k]
+
+
+### PARENT FETCH ###
+
+def fetch_parent(db: Session, parent_id: str) -> Optional[ParentChunkData]:
+    row = (
+        db.query(ParentChunk)
+        .filter(ParentChunk.parent_id == parent_id)
+        .first()
+    )
+    if not row:
+        return None
+    return ParentChunkData(
+        parent_id       = row.parent_id,
+        text            = row.text,
+        source_filename = row.source_filename,
+        course_id       = row.course_id,
+        file_id         = row.file_id,
+        section_heading = row.section_heading or "",
+        page_number     = row.page_number or 0,
+        page_range      = (row.page_range_start or 0, row.page_range_end or 0),
+        child_chunk_ids = row.child_chunk_ids or [],
+        created_at      = row.created_at.isoformat() if row.created_at else "",
+    )
+
+
+def fetch_siblings(
+    db: Session,
+    parent_id: str,
+    chunk_index: int,
+) -> Tuple[Optional[RetrievalChunkData], Optional[RetrievalChunkData]]:
+    prev_row = (
+        db.query(RetrievalChunk)
+        .filter(
+            RetrievalChunk.parent_id == parent_id,
+            RetrievalChunk.chunk_index == chunk_index - 1,
+        )
+        .first()
+    )
+    next_row = (
+        db.query(RetrievalChunk)
+        .filter(
+            RetrievalChunk.parent_id == parent_id,
+            RetrievalChunk.chunk_index == chunk_index + 1,
+        )
+        .first()
+    )
+    return (
+        _orm_to_chunk(prev_row) if prev_row else None,
+        _orm_to_chunk(next_row) if next_row else None,
+    )
+
+
+### DELETE ###
+
+def delete_file_chunks(db: Session, file_id: str) -> int:
+    deleted = (
+        db.query(RetrievalChunk)
+        .filter(RetrievalChunk.file_id == file_id)
+        .delete()
+    )
+    db.query(ParentChunk).filter(ParentChunk.file_id == file_id).delete()
+    db.commit()
+    logger.info(f"Deleted {deleted} retrieval chunks for file {file_id}")
+    return deleted
+
+
+### HELPERS ###
+
+def _orm_to_chunk(row: RetrievalChunk) -> RetrievalChunkData:
+    return RetrievalChunkData(
+        chunk_id          = row.chunk_id,
+        text              = row.text,
+        element_type      = row.element_type,
+        page_number       = row.page_number or 0,
+        section_heading   = row.section_heading or "",
+        chunk_index       = row.chunk_index,
+        source_filename   = row.source_filename,
+        file_id           = row.file_id,
+        course_id         = row.course_id,
+        user_id           = row.user_id,
+        parent_id         = row.parent_id,
+        formatted_content = row.formatted_content or "",
+    )
+
+
+def _row_to_chunk(row) -> RetrievalChunkData:
+    return RetrievalChunkData(
+        chunk_id          = row.chunk_id,
+        text              = row.text,
+        element_type      = row.element_type,
+        page_number       = row.page_number or 0,
+        section_heading   = row.section_heading or "",
+        chunk_index       = row.chunk_index,
+        source_filename   = row.source_filename,
+        file_id           = row.file_id,
+        course_id         = row.course_id,
+        user_id           = row.user_id,
+        parent_id         = row.parent_id,
+        formatted_content = row.formatted_content or "",
+    )

@@ -1,164 +1,189 @@
-"""
- Hybrid Search
-
-"""
-
 import logging
-from typing import Optional
+import math
+from typing import Dict, List, Tuple
+
+from sqlalchemy.orm import Session
 
 from app.rag.config import (
-    TOP_K_VECTOR,
-    TOP_K_BM25,
-    VECTOR_WEIGHT,
-    BM25_WEIGHT,
+    VECTOR_SEARCH_TOP_K,
+    BM25_SEARCH_TOP_K,
+    HYBRID_SEARCH_WEIGHT_VECTOR,
+    HYBRID_SEARCH_WEIGHT_BM25,
+    BM25_CACHE_ENABLED,
+    SIBLING_CONTEXT_ENABLED,
 )
-from app.rag.models import RetrievalChunk
+from app.rag.models import RetrievalChunkData, RetrievedResult, ParentChunkData
 from app.rag.modules.embedder import embed_single
-from app.rag.storage.vector_store import query_collection, get_all_documents
+from app.rag.storage.vector_store import (
+    search_vectors,
+    fetch_parent,
+    fetch_siblings,
+)
 
-logger = logging.getLogger("nexus.rag.retriever")
-
-
-def retrieve_for_query(
-    query: str,
-    course_id: str,
-    n_vector: int = TOP_K_VECTOR,
-    n_bm25:   int = TOP_K_BM25,
-) -> list[dict]:
-    """
-    Run hybrid search for a single query string.
-
-    """
-    # ── Vector search ────────────────────────────────────────────
-    vector_results = _vector_search(query, course_id, n_vector)
-
-    # ── BM25 search ──────────────────────────────────────────────
-    bm25_results = _bm25_search(query, course_id, n_bm25)
-
-    # ── Merge ────────────────────────────────────────────────────
-    merged = _merge(vector_results, bm25_results)
-
-    return merged
+logger = logging.getLogger(__name__)
 
 
-# ── Vector search ────────────────────────────────────────────────
+### BM25 ###
 
-def _vector_search(
-    query: str,
-    course_id: str,
-    n: int,
-) -> list[dict]:
-    """
-    Embed query and search ChromaDB. Returns normalised results.
-    """
-    try:
-        query_embedding = embed_single(query)
-    except RuntimeError as e:
-        logger.error(f"Cannot embed query: {e}")
-        return []
+_bm25_cache: Dict[str, List[Tuple[RetrievalChunkData, List[str]]]] = {}
 
-    raw = query_collection(course_id, query_embedding, n_results=n)
+K1 = 1.5
+B  = 0.75
 
-    # Scores are already in (0,1] from vector_store.query_collection
-    return [
-        {
-            "chunk_id":     r["id"],
-            "document":     r["document"],
-            "metadata":     r["metadata"],
-            "vector_score": r["score"],
-            "bm25_score":   0.0,
-        }
-        for r in raw
+
+def _tokenize(text: str) -> List[str]:
+    return text.lower().split()
+
+
+def _build_bm25_index(
+    db: Session, course_id: str
+) -> List[Tuple[RetrievalChunkData, List[str]]]:
+    if BM25_CACHE_ENABLED and course_id in _bm25_cache:
+        return _bm25_cache[course_id]
+
+    from app.rag.models import RetrievalChunk
+    rows = (
+        db.query(RetrievalChunk)
+        .filter(RetrievalChunk.course_id == course_id)
+        .all()
+    )
+
+    from app.rag.storage.vector_store import _orm_to_chunk
+    index = [
+        (_orm_to_chunk(row), _tokenize(row.text))
+        for row in rows
     ]
 
+    if BM25_CACHE_ENABLED:
+        _bm25_cache[course_id] = index
 
-# ── BM25 search ──────────────────────────────────────────────────
+    return index
 
-def _bm25_search(
+
+def _bm25_score(query_tokens: List[str], doc_tokens: List[str], avg_dl: float) -> float:
+    dl   = len(doc_tokens)
+    freq = {t: doc_tokens.count(t) for t in set(query_tokens)}
+    score = 0.0
+    for term, tf in freq.items():
+        idf   = math.log(1 + 1 / (1 + doc_tokens.count(term)))
+        denom = tf + K1 * (1 - B + B * dl / avg_dl) if avg_dl else 1
+        score += idf * (tf * (K1 + 1)) / denom
+    return score
+
+
+def _search_bm25(
+    db: Session,
     query: str,
     course_id: str,
-    n: int,
-) -> list[dict]:
-    """
-    BM25 keyword search over all stored documents for the course.
+    top_k: int = BM25_SEARCH_TOP_K,
+) -> List[Tuple[RetrievalChunkData, float]]:
+    index        = _build_bm25_index(db, course_id)
+    query_tokens = _tokenize(query)
+    avg_dl       = sum(len(tokens) for _, tokens in index) / len(index) if index else 1
 
-    """
-    try:
-        from rank_bm25 import BM25Okapi
-    except ImportError:
-        logger.warning(
-            "rank_bm25 not installed — BM25 search disabled. "
-            "Install with: pip install rank-bm25"
-        )
-        return []
-
-    all_docs = get_all_documents(course_id)
-    if not all_docs:
-        return []
-
-    # Tokenise (simple whitespace split — sufficient for BM25)
-    tokenised = [doc["document"].lower().split() for doc in all_docs]
-    bm25      = BM25Okapi(tokenised)
-
-    # Score all documents against the query
-    query_tokens = query.lower().split()
-    scores       = bm25.get_scores(query_tokens)
-
-    # Normalise to [0, 1]
-    max_score = max(scores) if scores.any() else 1.0
-    if max_score == 0:
-        return []
-    norm_scores = scores / max_score
-
-    # Collect top-n results with score > 0
-    indexed = sorted(
-        [(i, float(norm_scores[i])) for i in range(len(all_docs)) if norm_scores[i] > 0],
-        key=lambda x: x[1],
-        reverse=True,
-    )[:n]
-
-    return [
-        {
-            "chunk_id":     all_docs[i]["id"],
-            "document":     all_docs[i]["document"],
-            "metadata":     all_docs[i]["metadata"],
-            "vector_score": 0.0,
-            "bm25_score":   score,
-        }
-        for i, score in indexed
+    scored = [
+        (chunk, _bm25_score(query_tokens, tokens, avg_dl))
+        for chunk, tokens in index
     ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:top_k]
 
 
-# ── Score merging ────────────────────────────────────────────────
+def invalidate_bm25_cache(course_id: str) -> None:
+    _bm25_cache.pop(course_id, None)
 
-def _merge(
-    vector_results: list[dict],
-    bm25_results:   list[dict],
-) -> list[dict]:
-    """
-    Merge vector and BM25 results into a single ranked list.
 
-    """
-    combined: dict[str, dict] = {}
+### RRF FUSION ###
 
-    for r in vector_results:
-        cid = r["chunk_id"]
-        combined[cid] = {
-            **r,
-            "combined_score": VECTOR_WEIGHT * r["vector_score"],
-        }
+def _rrf_fusion(
+    result_lists: List[List[Tuple[RetrievalChunkData, float]]],
+    k: int = 60,
+) -> List[Tuple[RetrievalChunkData, float]]:
+    scores: Dict[str, float]          = {}
+    chunks: Dict[str, RetrievalChunkData] = {}
 
-    for r in bm25_results:
-        cid = r["chunk_id"]
-        if cid in combined:
-            # Already in vector results — add BM25 contribution
-            combined[cid]["bm25_score"]    = r["bm25_score"]
-            combined[cid]["combined_score"] += BM25_WEIGHT * r["bm25_score"]
-        else:
-            # Only in BM25 results
-            combined[cid] = {
-                **r,
-                "combined_score": BM25_WEIGHT * r["bm25_score"],
-            }
+    for result_list in result_lists:
+        for rank, (chunk, _) in enumerate(result_list):
+            cid = chunk.chunk_id
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+            chunks[cid] = chunk
 
-    return sorted(combined.values(), key=lambda x: x["combined_score"], reverse=True)
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [(chunks[cid], score) for cid, score in ranked]
+
+
+### PARENT + SIBLING FETCH ###
+
+def _enrich_results(
+    db: Session,
+    rrf_results: List[Tuple[RetrievalChunkData, float]],
+    top_k: int,
+) -> List[RetrievedResult]:
+    results = []
+
+    for chunk, rrf_score in rrf_results[:top_k]:
+        parent = fetch_parent(db, chunk.parent_id)
+
+        prev_sibling, next_sibling = None, None
+        if SIBLING_CONTEXT_ENABLED:
+            prev_sibling, next_sibling = fetch_siblings(
+                db, chunk.parent_id, chunk.chunk_index
+            )
+
+        results.append(RetrievedResult(
+            retrieval_chunk = chunk,
+            parent_chunk    = parent,
+            combined_score  = rrf_score,
+        ))
+
+    return results
+
+
+### PUBLIC API ###
+
+def retrieve(
+    db: Session,
+    query: str,
+    query_variants: List[str],
+    course_id: str,
+    top_k: int = VECTOR_SEARCH_TOP_K,
+) -> List[RetrievedResult]:
+    all_queries = [query] + query_variants
+    all_result_lists: List[List[Tuple[RetrievalChunkData, float]]] = []
+
+    for q in all_queries:
+        query_embedding = embed_single(q)
+
+        vector_results = search_vectors(db, query_embedding, course_id, top_k)
+        bm25_results   = _search_bm25(db, q, course_id, top_k)
+
+        merged = _merge_hybrid(vector_results, bm25_results)
+        all_result_lists.append(merged)
+
+    fused = _rrf_fusion(all_result_lists)
+
+    return _enrich_results(db, fused, top_k)
+
+
+def _merge_hybrid(
+    vector_results: List[Tuple[RetrievalChunkData, float]],
+    bm25_results:   List[Tuple[RetrievalChunkData, float]],
+) -> List[Tuple[RetrievalChunkData, float]]:
+    scores: Dict[str, float]              = {}
+    chunks: Dict[str, RetrievalChunkData] = {}
+
+    max_v = max((s for _, s in vector_results), default=1.0) or 1.0
+    max_b = max((s for _, s in bm25_results),   default=1.0) or 1.0
+
+    for chunk, score in vector_results:
+        cid = chunk.chunk_id
+        scores[cid] = scores.get(cid, 0.0) + HYBRID_SEARCH_WEIGHT_VECTOR * (score / max_v)
+        chunks[cid] = chunk
+
+    for chunk, score in bm25_results:
+        cid = chunk.chunk_id
+        scores[cid] = scores.get(cid, 0.0) + HYBRID_SEARCH_WEIGHT_BM25 * (score / max_b)
+        chunks[cid] = chunk
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [(chunks[cid], score) for cid, score in ranked]

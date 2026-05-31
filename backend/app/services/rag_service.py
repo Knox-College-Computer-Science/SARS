@@ -1,63 +1,70 @@
-import uuid
+import logging
 from fastapi import UploadFile
+from sqlalchemy.orm import Session
 
 from app.rag import pipeline
-from app.rag import config as rag_config
+
+logger = logging.getLogger(__name__)
 
 
-async def save_uploaded_file(
+async def upload_and_index(
     file: UploadFile,
     course_id: str,
-    use_ocr: bool = False,
+    user_id: str,
+    db: Session,
 ) -> dict:
-    file_bytes = await file.read()   # async read — non-blocking
-    file_id    = str(uuid.uuid4())
-
-    original_strategy = rag_config.EXTRACTION_STRATEGY
-    if use_ocr:
-        rag_config.EXTRACTION_STRATEGY = "hi_res"
-
-    try:
-        index_result = pipeline.index_document(
-            file_bytes = file_bytes,
-            filename   = file.filename,
-            course_id  = course_id,
-            user_id    = "current_user",   # Replace with actual user from auth
-            file_id    = file_id,
-        )
-    finally:
-        rag_config.EXTRACTION_STRATEGY = original_strategy
-
+    file_bytes = await file.read()
+    result     = pipeline.ingest(
+        db         = db,
+        file_bytes = file_bytes,
+        filename   = file.filename,
+        course_id  = course_id,
+        user_id    = user_id,
+    )
     return {
-        "file_name": file.filename,
-        "file_id":   file_id,
-        "index_result": {
-            "status":           index_result.status,
-            "retrieval_chunks": index_result.retrieval_chunks,
-            "parent_chunks":    index_result.parent_chunks,
-            "text_chunks":      index_result.text_chunks,
-            "table_chunks":     index_result.table_chunks,
-            "image_chunks":     index_result.image_chunks,
-            "error":            index_result.error,
-        },
+        "status":           result.status,
+        "file_id":          result.file_id,
+        "filename":         result.filename,
+        "retrieval_chunks": result.retrieval_chunks,
+        "parent_chunks":    result.parent_chunks,
+        "text_chunks":      result.text_chunks,
+        "table_chunks":     result.table_chunks,
+        "image_chunks":     result.image_chunks,
+        "error":            result.error,
     }
 
 
-def stream_chat_answer(question: str, course_id: str, conversation_history: list = None):
-    return pipeline.stream_answer(question, course_id, conversation_history or [])
+async def stream_answer(
+    question: str,
+    course_id: str,
+    user_id: str,
+    course_name: str,
+    db: Session,
+    history: list = None,
+):
+    async for event in pipeline.query(
+        db          = db,
+        user_query  = question,
+        course_id   = course_id,
+        user_id     = user_id,
+        course_name = course_name,
+        history     = history or [],
+    ):
+        yield event
 
 
-def get_chat_answer(question: str, course_id: str, conversation_history: list = None) -> dict:
-    return pipeline.answer_question(question, course_id, conversation_history or [])
+def list_indexed_files(db: Session, course_id: str) -> list:
+    return pipeline.list_course_files(db, course_id)
 
 
-def list_course_files(course_id: str) -> list:
-    return pipeline.list_course_files(course_id)
+def delete_indexed_file(db: Session, file_id: str, course_id: str) -> dict:
+    deleted_count = pipeline.delete_course_file(db, file_id, course_id)
+    return {
+        "file_id":       file_id,
+        "deleted_count": deleted_count,
+        "status":        "deleted" if deleted_count >= 0 else "not_found",
+    }
 
 
-def delete_course_file(course_id: str, file_id: str) -> int:
-    return pipeline.delete_course_file(course_id, file_id)
-
-
-def get_file_status(file_id: str) -> dict:
-    return pipeline.get_document_status(file_id)
+def get_indexed_file_status(db: Session, file_id: str) -> dict:
+    return pipeline.get_file_status(db, file_id)

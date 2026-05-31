@@ -1,69 +1,71 @@
-import json
 import logging
-from typing import Iterator
+from typing import AsyncGenerator, List
 
-import ollama as _ollama
+import google.generativeai as genai
 
-from app.rag.config import LLM_MODEL
-from app.rag.models import RetrievedResult
+from app.rag.config import (
+    GOOGLE_API_KEY,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_MAX_TOKENS,
+)
 
-logger = logging.getLogger("nexus.rag.generator")
+logger = logging.getLogger(__name__)
+
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
 
 
-def stream_response(
-    prompt_messages: list[dict],
-    results:         list[RetrievedResult],
-) -> Iterator[str]:
-    """
-    Stream an LLM answer as SSE events.
+### HELPERS ###
 
-    """
-    # ── Emit citations immediately (before LLM starts) ───────────
-    citations = _build_citations_payload(results)
-    yield _sse("citations", {"citations": citations})
+def _to_gemini_history(messages: List[dict]) -> List[dict]:
+    gemini_messages = []
+    for msg in messages:
+        role = msg["role"]
+        if role == "system":
+            continue
+        gemini_messages.append({
+            "role":  "user" if role == "user" else "model",
+            "parts": [msg["content"]],
+        })
+    return gemini_messages
 
-    # ── Stream tokens from Ollama ─────────────────────────────────
-    try:
-        stream = _ollama.chat(
-            model    = LLM_MODEL,
-            messages = prompt_messages,
-            stream   = True,
-        )
 
-        for chunk in stream:
-            token = chunk.get("message", {}).get("content", "")
-            if token:
-                yield _sse("token", {"text": token})
+def _extract_system(messages: List[dict]) -> str:
+    for msg in messages:
+        if msg["role"] == "system":
+            return msg["content"]
+    return ""
 
-    except Exception as e:
-        logger.error(f"LLM streaming failed: {e}", exc_info=True)
-        yield _sse("error", {"text": f"Generation error: {e}"})
+
+### PUBLIC API ###
+
+async def stream(messages: List[dict]) -> AsyncGenerator[str, None]:
+    if not GOOGLE_API_KEY:
+        yield "Error: GOOGLE_API_KEY not configured."
         return
 
-    yield _sse("done", {})
+    system_text     = _extract_system(messages)
+    history         = _to_gemini_history(messages[:-1])
+    user_query      = messages[-1]["content"]
 
+    try:
+        model = genai.GenerativeModel(
+            model_name   = LLM_MODEL,
+            system_instruction = system_text,
+            generation_config  = genai.GenerationConfig(
+                temperature  = LLM_TEMPERATURE,
+                max_output_tokens = LLM_MAX_TOKENS,
+            ),
+        )
 
-def _build_citations_payload(results: list[RetrievedResult]) -> list[dict]:
-    """
-    Build the citations list sent to the frontend in the first SSE event.
+        chat     = model.start_chat(history=history)
+        response = await chat.send_message_async(user_query, stream=True)
 
-    """
-    citations = []
-    for i, result in enumerate(results, 1):
-        rc = result.retrieval_chunk
-        citations.append({
-            "index":        i,
-            "source":       rc.source_filename,
-            "section":      rc.section_heading,
-            "page":         rc.page_number,
-            "element_type": rc.element_type,
-            "relevance":    round(result.combined_score, 3),
-            "citation":     result.citation_label,
-        })
-    return citations
+        async for chunk in response:
+            if chunk.text:
+                yield chunk.text
 
-
-def _sse(event_type: str, data: dict) -> str:
-    """Format a dict as an SSE data event string."""
-    payload = {"type": event_type, **data}
-    return f"data: {json.dumps(payload)}\n\n"
+    except Exception as e:
+        logger.error(f"Generation failed: {e}", exc_info=True)
+        yield f"Error: {e}"

@@ -1,245 +1,216 @@
-from typing import List, Tuple
-
-import io
-import re
 import hashlib
+import json
 import logging
-import unicodedata
+from pathlib import Path
+from typing import List, Optional
 
-from app.rag.config import VISION_MODEL, EXTRACT_IMAGES, EXTRACTION_STRATEGY
+import google.generativeai as genai
+
+from app.rag.config import (
+    GOOGLE_API_KEY,
+    IMAGE_CAPTION_ENABLED,
+    IMAGE_CAPTION_MODEL,
+    PARSE_RESULT_CACHE_ENABLED,
+    PARSE_CACHE_DIR,
+)
 from app.rag.models import ExtractedElement
 
-logger = logging.getLogger("sars.rag.extractor")
+logger = logging.getLogger(__name__)
 
-# Element categories from unstructured that we treat as narrative text
-_TEXT_CATEGORIES = {
-    "NarrativeText",
-    "ListItem",
-    "UncategorizedText",
-    "FigureCaption",
-}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
 
-# Categories we explicitly skip (noise)
-_SKIP_CATEGORIES = {"Header", "Footer", "PageBreak"}
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+
+
+### CACHE ###
+
+def _cache_path(md5: str) -> Path:
+    return PARSE_CACHE_DIR / f"{md5}.json"
+
+
+def _load_cache(md5: str) -> Optional[List[dict]]:
+    path = _cache_path(md5)
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def _save_cache(md5: str, elements: List[dict]) -> None:
+    try:
+        _cache_path(md5).write_text(
+            json.dumps(elements, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Cache write failed: {e}")
+
+
+### IMAGE CAPTIONING ###
+
+def _caption_image(image_bytes: bytes, context: str = "") -> str:
+    if not GOOGLE_API_KEY or not image_bytes:
+        return "[Image: caption unavailable]"
+    try:
+        model = genai.GenerativeModel(IMAGE_CAPTION_MODEL)
+        prompt = (
+            "Describe this image precisely for academic retrieval. "
+            "List all visible text exactly as written. "
+            "Identify all labels, axes, column headers, and row labels. "
+            "State the type of figure (diagram, chart, table, equation, photo). "
+            f"Context from surrounding text: {context[:300] if context else 'none'}."
+        )
+        response = model.generate_content([
+            {"mime_type": "image/png", "data": image_bytes},
+            prompt,
+        ])
+        return response.text.strip()
+    except Exception as e:
+        logger.warning(f"Image captioning failed: {e}")
+        return "[Image: caption failed]"
+
+
+### DOCLING EXTRACTION ###
+
+def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
+    try:
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        import tempfile, os
+
+        pipeline_opts = PdfPipelineOptions(
+            do_table_structure=True,
+            do_ocr=True,
+        )
+
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_opts)
+            }
+        )
+
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=Path(filename).suffix
+        ) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        try:
+            result = converter.convert(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+
+        elements: List[ExtractedElement] = []
+        current_heading = ""
+
+        for item, _ in result.document.iterate_items():
+            label = getattr(item, "label", "text")
+            text = getattr(item, "text", "").strip()
+            page = (
+                getattr(getattr(item, "prov", [None])[0], "page", 0)
+                if getattr(item, "prov", None)
+                else 0
+            )
+
+            if not text:
+                continue
+
+            if label in ("section_header", "title"):
+                current_heading = text
+                elements.append(ExtractedElement(
+                    element_type    = "title",
+                    text            = text,
+                    page_number     = page,
+                    section_heading = current_heading,
+                ))
+
+            elif label == "table":
+                md_table = getattr(item, "export_to_markdown", lambda: text)()
+                elements.append(ExtractedElement(
+                    element_type      = "table",
+                    text              = md_table,
+                    page_number       = page,
+                    section_heading   = current_heading,
+                    formatted_content = md_table,
+                ))
+
+            elif label == "picture":
+                if IMAGE_CAPTION_ENABLED:
+                    img_bytes = getattr(item, "image_bytes", b"")
+                    caption = _caption_image(img_bytes, current_heading)
+                    elements.append(ExtractedElement(
+                        element_type    = "image",
+                        text            = caption,
+                        page_number     = page,
+                        section_heading = current_heading,
+                        image_bytes     = img_bytes,
+                    ))
+
+            else:
+                elements.append(ExtractedElement(
+                    element_type    = "text",
+                    text            = text,
+                    page_number     = page,
+                    section_heading = current_heading,
+                ))
+
+        return elements
+
+    except ImportError:
+        logger.warning("Docling not installed, falling back to plain text extraction")
+        return _extract_plain_text(file_bytes, filename)
+    except Exception as e:
+        logger.error(f"Docling extraction failed for {filename}: {e}")
+        raise
+
+
+def _extract_plain_text(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
+    ext = Path(filename).suffix.lower()
+    if ext in (".txt", ".md"):
+        text = file_bytes.decode("utf-8", errors="replace")
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        return [
+            ExtractedElement(element_type="text", text=p, page_number=i + 1)
+            for i, p in enumerate(paragraphs)
+        ]
+    return [ExtractedElement(
+        element_type = "text",
+        text         = file_bytes.decode("utf-8", errors="replace"),
+        page_number  = 1,
+    )]
+
+
+### PUBLIC API ###
+
+def extract(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
+    ext = Path(filename).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    md5 = hashlib.md5(file_bytes).hexdigest()
+
+    if PARSE_RESULT_CACHE_ENABLED:
+        cached = _load_cache(md5)
+        if cached:
+            logger.info(f"Cache hit for {filename} ({md5[:8]})")
+            return [ExtractedElement(**e) for e in cached]
+
+    logger.info(f"Extracting {filename} ({len(file_bytes):,} bytes)")
+    elements = _extract_with_docling(file_bytes, filename)
+
+    if PARSE_RESULT_CACHE_ENABLED:
+        serializable = [
+            {k: v for k, v in e.__dict__.items() if k != "image_bytes"}
+            for e in elements
+        ]
+        _save_cache(md5, serializable)
+
+    logger.info(f"Extracted {len(elements)} elements from {filename}")
+    return elements
 
 
 def compute_md5(file_bytes: bytes) -> str:
-    """Return MD5 hex digest of file bytes. Used for duplicate detection."""
     return hashlib.md5(file_bytes).hexdigest()
-
-
-def extract_elements(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
-
-    from unstructured.partition.pdf import partition_pdf
-
-    logger.info(f"Extracting: {filename} (strategy={EXTRACTION_STRATEGY}, images={EXTRACT_IMAGES})")
-
-    try:
-        raw_elements = partition_pdf(
-            file=io.BytesIO(file_bytes),
-            strategy=EXTRACTION_STRATEGY,          # "fast" or "hi_res" (OCR)
-            include_page_breaks=True,
-            extract_images_in_pdf=EXTRACT_IMAGES,  # controlled by config
-        )
-    except Exception as e:
-        logger.error(f"PDF extraction failed for {filename}: {e}")
-        raise ValueError(f"Could not parse {filename}: {e}")
-
-    extracted: List[ExtractedElement] = []
-    current_section = ""   # Tracks the most recent Title element
-
-    for elem in raw_elements:
-        category = elem.category
-        text     = _clean_text(str(elem))
-        page_num = getattr(elem.metadata, "page_number", 0) or 0
-
-        if not text:
-            continue
-
-        if category in _SKIP_CATEGORIES:
-            continue
-
-        if category == "Title":
-            current_section = text
-            extracted.append(ExtractedElement(
-                element_type    = "title",
-                text            = text,
-                page_number     = page_num,
-                section_heading = current_section,
-            ))
-
-        elif category == "Table":
-            html = getattr(elem.metadata, "text_as_html", "") or ""
-            formatted   = _html_table_to_markdown(html) if html else text
-            linearized  = _linearize_table(html) if html else text
-
-            extracted.append(ExtractedElement(
-                element_type      = "table",
-                text              = linearized,
-                page_number       = page_num,
-                section_heading   = current_section,
-                formatted_content = formatted,
-            ))
-
-        elif category == "Image":
-            if EXTRACT_IMAGES:
-                image_b64 = getattr(elem.metadata, "image_base64", None)
-                if image_b64:
-                    caption = _caption_image_safe(image_b64, filename, page_num)
-                    if caption:
-                        extracted.append(ExtractedElement(
-                            element_type    = "image",
-                            text            = caption,
-                            page_number     = page_num,
-                            section_heading = current_section,
-                        ))
-
-        elif category in _TEXT_CATEGORIES:
-            if len(text) < 10:
-                continue
-            extracted.append(ExtractedElement(
-                element_type    = "text",
-                text            = text,
-                page_number     = page_num,
-                section_heading = current_section,
-            ))
-
-        else:
-            if len(text) > 40:
-                extracted.append(ExtractedElement(
-                    element_type    = "text",
-                    text            = text,
-                    page_number     = page_num,
-                    section_heading = current_section,
-                ))
-
-    logger.info(
-        f"Extracted {len(extracted)} elements from {filename}: "
-        f"{sum(1 for e in extracted if e.element_type == 'text')} text, "
-        f"{sum(1 for e in extracted if e.element_type == 'title')} titles, "
-        f"{sum(1 for e in extracted if e.element_type == 'table')} tables, "
-        f"{sum(1 for e in extracted if e.element_type == 'image')} images"
-    )
-    return extracted
-
-
-def detect_document_type(elements: List[ExtractedElement]) -> str:
-
-    if not elements:
-        return "unstructured"
-    title_count = sum(1 for e in elements if e.element_type == "title")
-    ratio = title_count / len(elements)
-    doc_type = "structured" if ratio > 0.12 else "unstructured"
-    logger.debug(f"Document type detected: {doc_type} (title ratio={ratio:.2f})")
-    return doc_type
-
-
-# ── Private helpers ──────────────────────────────────────────────
-
-def _clean_text(text: str) -> str:
-
-    text = unicodedata.normalize("NFKC", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def _html_table_to_markdown(html: str) -> str:
-
-    try:
-        text = html
-        text = re.sub(r"</?table[^>]*>", "", text)
-        text = re.sub(r"</?thead[^>]*>", "", text)
-        text = re.sub(r"</?tbody[^>]*>", "", text)
-        text = re.sub(r"</tr>", "\n", text)
-        text = re.sub(r"<tr[^>]*>", "| ", text)
-        text = re.sub(r"</t[dh]>\s*<t[dh][^>]*>", " | ", text)
-        text = re.sub(r"<t[dh][^>]*>", "", text)
-        text = re.sub(r"</t[dh]>", " |", text)
-        text = re.sub(r"<[^>]+>", "", text)
-
-        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-        if len(lines) >= 1:
-            col_count = lines[0].count("|") - 1
-            if col_count > 0:
-                separator = "| " + " | ".join(["---"] * col_count) + " |"
-                lines.insert(1, separator)
-
-        return "\n".join(lines)
-    except Exception:
-        return html
-
-
-def _linearize_table(html: str) -> str:
-
-    try:
-        # Extract all rows
-        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL)
-        if not rows:
-            return _html_table_to_markdown(html)
-
-        # Parse header row
-        header_cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", rows[0], re.DOTALL)
-        headers = [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
-
-        lines = []
-        for row_idx, row in enumerate(rows[1:], 1):
-            cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL)
-            cell_texts = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
-
-            row_label = cell_texts[0] if cell_texts else f"Row {row_idx}"
-
-            pairs = []
-            for col_idx, cell in enumerate(cell_texts[1:], 1):
-                if cell and col_idx < len(headers):
-                    pairs.append(f"{headers[col_idx]}={cell}")
-
-            if pairs:
-                lines.append(f"Row {row_idx} ({row_label}): {' | '.join(pairs)}")
-
-        return "\n".join(lines) if lines else _html_table_to_markdown(html)
-
-    except Exception:
-        return _html_table_to_markdown(html)
-
-
-def _caption_image_safe(image_b64: str, filename: str, page: int) -> str:
-    """
-    Caption an image using LLaVA via Ollama..
-
-    Retries up to 3 times with exponential backoff before giving up.
-    """
-    import time
-    import base64
-    import ollama as _ollama
-
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            image_bytes = base64.b64decode(image_b64)
-            response = _ollama.generate(
-                model=VISION_MODEL,
-                prompt=(
-                    "Describe this image from an academic document. "
-                    "Include any text, labels, axes, data values, or diagrams. "
-                    "Be factual and concise."
-                ),
-                images=[image_bytes],
-            )
-            caption = response.get("response", "").strip()
-            if caption:
-                logger.debug(f"Captioned image p.{page} of {filename}: {caption[:60]}…")
-            return caption
-
-        except Exception as e:
-            if attempt < max_attempts - 1:
-                wait = 2 ** attempt  # 1s, 2s
-                logger.warning(f"Image captioning attempt {attempt+1} failed, retrying in {wait}s: {e}")
-                time.sleep(wait)
-            else:
-                logger.warning(
-                    f"Image captioning skipped (p.{page} of {filename}) after {max_attempts} attempts: {e}. "
-                    f"Pull llava with: ollama pull llava"
-                )
-                return ""
-
-    return ""

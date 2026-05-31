@@ -1,72 +1,111 @@
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Base paths
-
-RAG_DIR     = Path(__file__).resolve().parent          # app/rag/
-APP_DIR     = RAG_DIR.parent                           # app/
-BACKEND_DIR = APP_DIR.parent                           # backend/
-
-STORAGE_DIR     = BACKEND_DIR / "rag_storage"
-UPLOAD_DIR      = BACKEND_DIR / "RAG_Uploads"
-CHROMA_DIR      = STORAGE_DIR / "chroma_db"
-CHUNK_STORE_DIR = STORAGE_DIR / "chunk_store"
-EVAL_LOG_DIR    = STORAGE_DIR / "eval_logs"
+load_dotenv()
 
 
-# Models
-EMBED_MODEL  = "nomic-embed-text"
-LLM_MODEL    = "llama3.2"
-VISION_MODEL = "llava"
+### PATHS ###
 
-#  Extraction
+RAG_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "RAG_Uploads"
+RAG_UPLOADS_DIR.mkdir(exist_ok=True)
 
-EXTRACTION_STRATEGY = "fast"
-EXTRACT_IMAGES      = True   # Images enabled
+PARSE_CACHE_DIR = Path(__file__).resolve().parent / "storage" / "parse_cache"
+PARSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-#  Chunking
-CHUNK_MIN_CHARS            = 200   # Merge fragments smaller than this
-CHUNK_MAX_CHARS            = 600   # Hard cap per retrieval chunk
-CHUNK_SEMANTIC_TRIGGER     = 600   # Use semantic split above this size
-SEMANTIC_BREAKPOINT_PCTILE = 85    # Cosine distance percentile for splitting
-IMAGE_MIN_CAPTION_CHARS    = 20    # Skip captions shorter than this
 
-#Hybrid search weights
-VECTOR_WEIGHT = 0.6
-BM25_WEIGHT   = 0.4
+### EMBEDDING ###
 
-#  Retrieval
-TOP_K_VECTOR = 20   # Candidates from vector search
-TOP_K_BM25   = 20   # Candidates from BM25 keyword search
-TOP_K_FINAL  = 5    # Final top-K sent to LLM after RRF fusion
+EMBEDDING_PROVIDER  = os.getenv("EMBEDDING_PROVIDER", "google")
+EMBEDDING_MODEL     = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+EMBEDDING_DIMENSION = 768
+EMBEDDING_BATCH_SIZE = 100
 
-#  Multi-query
-MULTIQUERY_VARIANTS = 2
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
-# Conversation memory
-MEMORY_WINDOW = 6
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "")
+HUGGINGFACE_MODEL   = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
 
-MULTIQUERY_PROMPT_TEMPLATE = """\
-Generate {n} alternative search queries for the question below.
-Each alternative should use different wording but ask the same thing.
-Return ONLY the alternatives, one per line, no numbering, no extra text.
+GOOGLE_API_KEY          = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_EMBEDDING_MODEL  = "gemini-embedding-001"
 
-Question: {query}
 
-Alternatives:"""
+### LLM ###
 
-MULTIQUERY_ENABLED = True
+LLM_PROVIDER      = "google"
+LLM_MODEL         = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+LLM_TEMPERATURE   = 0.1
+LLM_MAX_TOKENS    = 1024
 
-# ChromaDB
-COLLECTION_PREFIX = "sars_"   # sars_course_1, sars_course_2, etc.
 
-# Ollama retry
-OLLAMA_MAX_RETRIES = 3    # Attempts before giving up
-OLLAMA_RETRY_DELAY = 1.0  # Base delay in seconds
+### CHUNKING ###
 
-#  Evaluation logging
-EVAL_LOGGING_ENABLED = True
-EVAL_LOG_FILE        = EVAL_LOG_DIR / "retrieval_log.jsonl"
+CHUNK_MIN_CHARS    = 300
+CHUNK_MAX_CHARS    = 1200
+CHUNK_OVERLAP_CHARS = 100
+SLIDE_MERGE_THRESHOLD = 400
 
-#  Auto-create storage directories on import
-for _dir in [STORAGE_DIR, UPLOAD_DIR, CHROMA_DIR, CHUNK_STORE_DIR, EVAL_LOG_DIR]:
-    _dir.mkdir(parents=True, exist_ok=True)
+
+### RETRIEVAL ###
+
+VECTOR_SEARCH_TOP_K = 20
+BM25_SEARCH_TOP_K   = 20
+
+RERANK_MODEL     = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RERANK_TOP_K     = 8
+RERANK_THRESHOLD = 0.3
+RERANKING_BATCH_SIZE = 32
+
+QUERY_VARIANTS_COUNT        = 3
+HYBRID_SEARCH_WEIGHT_VECTOR = 0.6
+HYBRID_SEARCH_WEIGHT_BM25   = 0.4
+
+
+### CONTEXT WINDOW ###
+
+TOTAL_CONTEXT_BUDGET  = 6000
+HISTORY_MAX_TOKENS    = 2000
+RETRIEVAL_MAX_TOKENS  = 4000
+RETRIEVAL_MEMORY_WINDOW = 10
+
+
+### QUALITY GATES ###
+
+QUALITY_TIER_HIGH_MIN_CHARS      = 150
+QUALITY_TIER_HIGH_MIN_DIVERSITY  = 0.5
+QUALITY_TIER_MEDIUM_MIN_CHARS    = 80
+QUALITY_TIER_MEDIUM_MIN_DIVERSITY = 0.35
+QUALITY_TIER_LOW_MIN_CHARS       = 20
+
+
+### CIRCUIT BREAKER ###
+
+CIRCUIT_BREAKER_ENABLED           = True
+CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5
+CIRCUIT_BREAKER_RESET_TIMEOUT_SECONDS = 30
+
+
+### INDEXING ###
+
+DUPLICATE_DETECTION_ENABLED = True
+PARSE_RESULT_CACHE_ENABLED  = True
+
+IMAGE_EXTRACTION_ENABLED = False
+IMAGE_CAPTION_ENABLED    = True
+IMAGE_CAPTION_MODEL      = LLM_MODEL
+
+
+### LOGGING ###
+
+EVAL_LOG_ENABLED = True
+
+
+### FEATURE FLAGS ###
+
+MULTIQUERY_ENABLED      = True
+CONTEXT_PACKING_ENABLED = True
+SIBLING_CONTEXT_ENABLED = True
+RERANKING_ENABLED       = True
+BM25_CACHE_ENABLED      = True
+
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"

@@ -1,62 +1,104 @@
-### Multi-Query ###
-
 import logging
 import re
+from typing import List
 
-import ollama as _ollama
+import google.generativeai as genai
 
 from app.rag.config import (
+    GOOGLE_API_KEY,
     LLM_MODEL,
+    QUERY_VARIANTS_COUNT,
     MULTIQUERY_ENABLED,
-    MULTIQUERY_VARIANTS,
-    MULTIQUERY_PROMPT_TEMPLATE,
 )
 
-logger = logging.getLogger("nexus.rag.expander")
+logger = logging.getLogger(__name__)
+
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
 
 
-def generate_query_variants(query: str) -> list[str]:
+### INTENT DETECTION ###
 
+_TABLE_KEYWORDS = {
+    "table", "row", "column", "value", "rate", "percentage",
+    "price", "cost", "score", "grade", "list", "when", "date",
+    "how many", "how much", "what is the", "what are the",
+}
+
+_CONCEPTUAL_KEYWORDS = {
+    "explain", "why", "how does", "what is", "describe",
+    "difference between", "compare", "relationship", "define",
+}
+
+_PLANNING_KEYWORDS = {
+    "prerequisite", "before", "requirement", "sequence",
+    "schedule", "plan", "next", "after",
+}
+
+_SYLLABUS_KEYWORDS = {
+    "syllabus", "exam", "quiz", "deadline", "due", "policy",
+    "grading", "office hours", "professor", "instructor",
+}
+
+
+def detect_intent(query: str) -> str:
+    q = query.lower()
+
+    if any(kw in q for kw in _SYLLABUS_KEYWORDS):
+        return "syllabus"
+    if any(kw in q for kw in _TABLE_KEYWORDS):
+        return "table_lookup"
+    if any(kw in q for kw in _PLANNING_KEYWORDS):
+        return "planning"
+    if any(kw in q for kw in _CONCEPTUAL_KEYWORDS):
+        return "conceptual"
+    return "factual"
+
+
+### QUERY EXPANSION ###
+
+_EXPANSION_PROMPT = """You are a query expansion assistant for a university course RAG system.
+
+Given a student's question, generate {n} alternative phrasings that:
+1. Rephrase using different vocabulary a textbook might use
+2. Extract the core keyword terms only (for keyword search)
+
+Return ONLY the alternative questions, one per line, no numbering, no explanation.
+
+Student question: {query}"""
+
+
+def expand_query(query: str) -> List[str]:
     if not MULTIQUERY_ENABLED:
-        return [query]
+        return []
+
+    if not GOOGLE_API_KEY:
+        logger.warning("No GOOGLE_API_KEY — multi-query expansion disabled")
+        return _fallback_expansion(query)
 
     try:
-        alternatives = _generate_alternatives(query, MULTIQUERY_VARIANTS)
-        variants = [query] + alternatives
-        logger.debug(f"Query expanded to {len(variants)} variants: {variants}")
+        model    = genai.GenerativeModel(LLM_MODEL)
+        prompt   = _EXPANSION_PROMPT.format(
+            n=QUERY_VARIANTS_COUNT - 1,
+            query=query,
+        )
+        response = model.generate_content(prompt)
+        lines    = [
+            line.strip()
+            for line in response.text.strip().splitlines()
+            if line.strip() and line.strip() != query
+        ]
+        variants = lines[: QUERY_VARIANTS_COUNT - 1]
+        logger.info(f"Expanded query into {len(variants)} variants")
         return variants
+
     except Exception as e:
-        logger.warning(f"Multi-query generation failed, using original query: {e}")
-        return [query]
+        logger.warning(f"Query expansion failed: {e}, using fallback")
+        return _fallback_expansion(query)
 
 
-def _generate_alternatives(query: str, n: int) -> list[str]:
-
-    prompt = MULTIQUERY_PROMPT_TEMPLATE.format(n=n, query=query)
-
-    response = _ollama.generate(
-        model=LLM_MODEL,
-        prompt=prompt,
-
-        options={"num_predict": 120, "temperature": 0.3},
-    )
-    raw = response.get("response", "").strip()
-
-    alternatives = _parse_alternatives(raw, n)
-    return alternatives
-
-
-def _parse_alternatives(raw: str, n: int) -> list[str]:
-
-    lines = raw.split("\n")
-    alternatives = []
-
-    for line in lines:
-        # Strip leading numbers, bullets, dashes, dots
-        cleaned = re.sub(r"^[\d\.\-\*\)\s]+", "", line).strip()
-        # Skip empty lines or lines that are clearly metadata
-        if cleaned and len(cleaned) > 5:
-            alternatives.append(cleaned)
-
-    # Take exactly n alternatives (pad with original trimmed variants if short)
-    return alternatives[:n]
+def _fallback_expansion(query: str) -> List[str]:
+    words    = query.lower().split()
+    keywords = [w for w in words if len(w) > 3]
+    keyword_variant = " ".join(keywords) if keywords else query
+    return [keyword_variant] if keyword_variant != query else []
