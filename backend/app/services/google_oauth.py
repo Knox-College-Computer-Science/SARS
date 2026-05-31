@@ -315,12 +315,57 @@ def get_course_materials(access_token: str, course_id: str) -> dict:
     return response.json()
 
 
+def get_course_label(course: dict) -> str:
+    course_name = course.get("name") or "Untitled Course"
+    course_section = course.get("section")
+
+    if course_section:
+        return f"{course_name} - {course_section}"
+
+    return course_name
+
+
+def add_google_material_to_lists(material: dict, pdfs: list, slides: list, links: list, seen_urls: set):
+    drive_file_wrapper = material.get("driveFile", {})
+    drive_file = drive_file_wrapper.get("driveFile", {}) if drive_file_wrapper else {}
+    link = material.get("link", {})
+
+    if drive_file:
+        mime = drive_file.get("mimeType", "")
+        title = drive_file.get("title", "Untitled")
+        url = drive_file.get("alternateLink", "")
+
+        if url and url in seen_urls:
+            return
+
+        if url:
+            seen_urls.add(url)
+
+        if "pdf" in mime.lower():
+            pdfs.append({"title": title, "url": url, "type": "pdf"})
+        elif "presentation" in mime.lower():
+            slides.append({"title": title, "url": url, "type": "slides"})
+        else:
+            links.append({"title": title, "url": url, "type": "drive"})
+
+    if link:
+        url = link.get("url", "")
+        title = link.get("title", url)
+
+        if url and url in seen_urls:
+            return
+
+        if url:
+            seen_urls.add(url)
+
+        links.append({"title": title, "url": url, "type": "link"})
+
 def get_all_materials_for_courses(access_token: str, courses: list) -> list:
     all_courses_materials = []
 
     for course in courses:
         course_id = course.get("id")
-        course_name = course.get("name")
+        course_name = get_course_label(course)
 
         if not course_id:
             continue
@@ -328,36 +373,43 @@ def get_all_materials_for_courses(access_token: str, courses: list) -> list:
         pdfs = []
         slides = []
         links = []
+        seen_urls = set()
 
+        # 1. Pull from Google Classroom "Classwork / Materials" section
         try:
             response_data = get_course_materials(access_token, course_id)
             materials_list = response_data.get("courseWorkMaterial", [])
 
             for material_item in materials_list:
                 for mat in material_item.get("materials", []):
-                    drive_file_wrapper = mat.get("driveFile", {})
-                    drive_file = drive_file_wrapper.get("driveFile", {}) if drive_file_wrapper else {}
-                    link = mat.get("link", {})
-
-                    if drive_file:
-                        mime = drive_file.get("mimeType", "")
-                        title = drive_file.get("title", "Untitled")
-                        url = drive_file.get("alternateLink", "")
-
-                        if "pdf" in mime.lower():
-                            pdfs.append({"title": title, "url": url, "type": "pdf"})
-                        elif "presentation" in mime.lower():
-                            slides.append({"title": title, "url": url, "type": "slides"})
-                        else:
-                            links.append({"title": title, "url": url, "type": "drive"})
-
-                    if link:
-                        url = link.get("url", "")
-                        title = link.get("title", url)
-                        links.append({"title": title, "url": url, "type": "link"})
+                    add_google_material_to_lists(
+                        mat,
+                        pdfs,
+                        slides,
+                        links,
+                        seen_urls,
+                    )
 
         except Exception as e:
-            print(f"Failed to fetch materials for course {course_name} ({course_id}): {e}")
+            print(f"Failed to fetch classwork materials for course {course_name} ({course_id}): {e}")
+
+        # 2. Pull attachments from the main announcement stream
+        try:
+            announcements_data = get_course_announcements(access_token, course_id)
+            announcements = announcements_data.get("announcements", [])
+
+            for announcement in announcements:
+                for mat in announcement.get("materials", []):
+                    add_google_material_to_lists(
+                        mat,
+                        pdfs,
+                        slides,
+                        links,
+                        seen_urls,
+                    )
+
+        except Exception as e:
+            print(f"Failed to fetch announcement materials for course {course_name} ({course_id}): {e}")
 
         all_courses_materials.append({
             "courseId": course_id,
