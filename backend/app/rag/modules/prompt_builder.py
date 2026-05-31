@@ -1,76 +1,88 @@
-
 import logging
 from typing import List
 
-from app.rag.config import MEMORY_WINDOW
-from app.rag.models import RetrievedResult
+from app.rag.config import HISTORY_MAX_TOKENS, RETRIEVAL_MEMORY_WINDOW
 
-logger = logging.getLogger("sars.rag.prompt_builder")
+logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """\
-You are SARS AI, a course assistant embedded in a student's course hub.
-You answer questions STRICTLY using the retrieved course materials provided below.
+CHARS_PER_TOKEN = 4
+
+
+### SYSTEM PROMPTS ###
+
+_BASE_SYSTEM = """You are SARS AI, a course assistant for {course_name}.
+
+Your job is to answer student questions using only the provided course materials.
 
 Rules:
-1. Ground every factual claim in the provided sources.
-2. Cite sources inline using [1], [2], etc. immediately after the claim.
-3. If a source is a table, read it carefully row by row to find the exact answer.
-4. If a source is an image description, note you are referring to a visual.
-5. If the answer cannot be found in the provided materials, say clearly:
-   "I couldn't find that in the uploaded course materials."
-   Do NOT guess or invent information.
-6. Be concise but complete. Use markdown formatting where it aids clarity.
-7. Do not describe your retrieval process — just answer naturally.\
-"""
+- Only use information from the retrieved materials below
+- If the answer is not in the materials, say so clearly — do not guess
+- Cite sources inline using the format [filename, p.N]
+- Be concise and direct"""
+
+_CONFIDENCE_INSTRUCTIONS = {
+    "high":   "",
+    "medium": "\nNote: Retrieval confidence is moderate. Mention if you are uncertain about any specific detail.",
+    "low":    "\nNote: Retrieval confidence is low. Clearly state that the materials may not fully address this question.",
+    "none":   "\nNote: No relevant materials were found. Tell the student you could not find an answer in the course materials.",
+}
+
+_INTENT_INSTRUCTIONS = {
+    "table_lookup": "\nFor this query: Read any tables row by row to find exact values. Quote the exact figure.",
+    "conceptual":   "\nFor this query: Provide a thorough explanation with examples from the materials.",
+    "factual":      "\nFor this query: Give a direct, specific answer with the exact source cited.",
+    "planning":     "\nFor this query: Consider any prerequisites or sequences mentioned in the materials.",
+    "syllabus":     "\nFor this query: Look for exact dates, policies, or grading information in the materials.",
+}
 
 
-def build_prompt(
-    query:                str,
-    results:              List[RetrievedResult],
-    conversation_history: List[dict],
+### HISTORY TRIMMING ###
+
+def _trim_history(history: List[dict]) -> List[dict]:
+    if not history:
+        return []
+
+    trimmed = history[-RETRIEVAL_MEMORY_WINDOW:]
+    total_chars = sum(len(m.get("content", "")) for m in trimmed)
+    max_chars   = HISTORY_MAX_TOKENS * CHARS_PER_TOKEN
+
+    while trimmed and total_chars > max_chars:
+        removed     = trimmed.pop(0)
+        total_chars -= len(removed.get("content", ""))
+
+    return trimmed
+
+
+### PUBLIC API ###
+
+def build_messages(
+    query: str,
+    context_block: str,
+    history: List[dict],
+    course_name: str,
+    confidence: str = "high",
+    intent: str = "factual",
 ) -> List[dict]:
+    system_text = _BASE_SYSTEM.format(course_name=course_name)
+    system_text += _CONFIDENCE_INSTRUCTIONS.get(confidence, "")
+    system_text += _INTENT_INSTRUCTIONS.get(intent, "")
 
-    messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if context_block:
+        system_text += f"\n\n### RETRIEVED MATERIALS ###\n\n{context_block}"
+    else:
+        system_text += "\n\n### RETRIEVED MATERIALS ###\n\nNo relevant materials found."
 
-    #  Conversation history (sliding window)
-    for turn in conversation_history[-MEMORY_WINDOW:]:
-        if turn.get("role") in ("user", "assistant") and turn.get("content"):
-            messages.append({"role": turn["role"], "content": turn["content"]})
+    trimmed_history = _trim_history(history)
 
-    #  Context block
-    context_lines: List[str] = ["## Retrieved Course Materials\n"]
+    messages = [{"role": "system", "content": system_text}]
+    messages.extend(trimmed_history)
+    messages.append({"role": "user", "content": query})
 
-    for i, result in enumerate(results, 1):
-        rc     = result.retrieval_chunk
-        parent = result.parent_chunk
-
-        # Build citation label from retrieval chunk metadata
-        section_part = f" — {rc.section_heading}" if rc.section_heading else ""
-        citation = f"{rc.source_filename}{section_part}, p.{rc.page_number} ({rc.element_type})"
-
-        # Build metadata header for LLM context
-        header_parts = [f"Source: {rc.source_filename}"]
-        if rc.section_heading:
-            header_parts.append(f"Section: {rc.section_heading}")
-        header_parts.append(f"Page: {rc.page_number}")
-        header_parts.append(f"Type: {rc.element_type}")
-        header = "[" + " | ".join(header_parts) + "]\n\n"
-
-        if rc.element_type == "table" and rc.formatted_content:
-            content = f"[Table from {citation}]\n\n{rc.formatted_content}"
-        elif parent:
-            content = header + parent.text
-        else:
-            content = header + rc.text
-
-        context_lines.append(f"[{i}] ({citation})")
-        context_lines.append(content)
-        context_lines.append("")
-
-    context_block = "\n".join(context_lines)
-
-    # Final user message
-    user_message = f"{context_block}\n---\n\n**Question:** {query}"
-    messages.append({"role": "user", "content": user_message})
+    total_chars = sum(len(m["content"]) for m in messages)
+    logger.info(
+        f"Built prompt: {len(messages)} messages, "
+        f"~{total_chars // CHARS_PER_TOKEN} tokens "
+        f"(confidence={confidence}, intent={intent})"
+    )
 
     return messages
