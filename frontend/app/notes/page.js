@@ -8,20 +8,23 @@ function Skeleton({ className = "" }) {
 }
 
 const notesCache = {
-  notes:             null,
-  courses:           null,
+  notes: null,
+  currentCourses: null,
+  pastCourses: null,
   classroomMaterials: null,
 };
 
 export default function NotesPage() {
-  const [notes,              setNotes             ] = useState(notesCache.notes              ?? []);
-  const [courses,            setCourses           ] = useState(notesCache.courses            ?? []);
+  const [notes, setNotes] = useState(notesCache.notes ?? []);
+  const [currentCourses, setCurrentCourses] = useState(notesCache.currentCourses ?? []);
+  const [pastCourses, setPastCourses] = useState(notesCache.pastCourses ?? []);
   const [classroomMaterials, setClassroomMaterials] = useState(notesCache.classroomMaterials ?? []);
-  const [selectedSubject,    setSelectedSubject   ] = useState("All");
+  const [selectedTerm, setSelectedTerm] = useState("current");
+  const [selectedCourse, setSelectedCourse] = useState(null);
   const [isConnected,        setIsConnected       ] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(true);
   const [loadingNotes,       setLoadingNotes      ] = useState(notesCache.notes              === null);
-  const [loadingCourses,     setLoadingCourses    ] = useState(notesCache.courses            === null);
+  const [loadingCourses, setLoadingCourses] = useState(notesCache.currentCourses === null);
   const [loadingMaterials,   setLoadingMaterials  ] = useState(notesCache.classroomMaterials === null);
   const [previewNoteId,      setPreviewNoteId     ] = useState(null);
 
@@ -36,7 +39,8 @@ export default function NotesPage() {
     if (!res.ok) {
       // Clear cache on disconnect
       notesCache.notes = null;
-      notesCache.courses = null;
+      notesCache.currentCourses = null;
+      notesCache.pastCourses = null;
       notesCache.classroomMaterials = null;
       setIsConnected(false);
       return;
@@ -45,7 +49,7 @@ export default function NotesPage() {
     const connected = Boolean(data.user && data.has_access_token);
     setIsConnected(connected);
     if (connected) {
-      if (notesCache.courses            === null) fetchCourses();
+      if (notesCache.currentCourses === null) fetchCourses();
       if (notesCache.notes              === null) fetchNotes();
       if (notesCache.classroomMaterials === null) fetchClassroomMaterials();
     }
@@ -58,17 +62,36 @@ export default function NotesPage() {
   }
 }
 
-  async function fetchCourses() {
+async function fetchCourses() {
   setLoadingCourses(true);
+
   try {
-    const res  = await fetch("/api/classroom/courses", { credentials: "include" });
-    if (!res.ok) { notesCache.courses = []; setCourses([]); return; }
+    const res = await fetch("/api/classroom/courses/upload-options", {
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      notesCache.currentCourses = [];
+      notesCache.pastCourses = [];
+      setCurrentCourses([]);
+      setPastCourses([]);
+      return;
+    }
+
     const data = await res.json();
-    notesCache.courses = data.courses || [];
-    setCourses(notesCache.courses);
+
+    notesCache.currentCourses = data.current_courses || [];
+    notesCache.pastCourses = data.past_courses || [];
+
+    setCurrentCourses(notesCache.currentCourses);
+    setPastCourses(notesCache.pastCourses);
   } catch (err) {
-    console.error(err); setCourses([]);
-  } finally { setLoadingCourses(false); }
+    console.error(err);
+    setCurrentCourses([]);
+    setPastCourses([]);
+  } finally {
+    setLoadingCourses(false);
+  }
 }
 
 async function fetchNotes() {
@@ -85,7 +108,7 @@ async function fetchNotes() {
 async function fetchClassroomMaterials() {
   setLoadingMaterials(true);
   try {
-    const res  = await fetch("/api/classroom/materials", { credentials: "include" });
+    const res  = await fetch("/api/classroom/materials/all", { credentials: "include" });
     if (!res.ok) return;
     const data = await res.json();
     notesCache.classroomMaterials = data.materials || [];
@@ -93,9 +116,48 @@ async function fetchClassroomMaterials() {
   } catch (err) { console.error(err); }
   finally { setLoadingMaterials(false); }
 }
-  const filteredNotes = selectedSubject === "All"
-    ? notes
-    : notes.filter((n) => n.subject === selectedSubject);
+  
+  function getCourseLabel(course) {
+    return course.section ? `${course.name} - ${course.section}` : course.name;
+  }
+
+  function normalize(value) {
+    return (value || "").trim().toLowerCase();
+  }
+
+  const allCourses = [...currentCourses, ...pastCourses];
+
+  function noteBelongsToCourse(note, course) {
+    const courseLabel = getCourseLabel(course);
+
+    if (normalize(note.subject) === normalize(courseLabel)) {
+      return true;
+    }
+
+    const sameNameCourses = allCourses.filter(
+      (c) => normalize(c.name) === normalize(course.name)
+    );
+
+    if (
+      sameNameCourses.length === 1 &&
+      normalize(note.subject) === normalize(course.name)
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function getNotesForCourse(course) {
+    return notes.filter((note) => noteBelongsToCourse(note, course));
+  }
+
+  const visibleCourses =
+    selectedTerm === "current" ? currentCourses : pastCourses;
+
+  const selectedCourseNotes = selectedCourse
+    ? getNotesForCourse(selectedCourse)
+    : [];
 
   // ── Loading state ──────────────────────────────────────────────────────────
   if (checkingConnection) {
@@ -137,94 +199,210 @@ async function fetchClassroomMaterials() {
             </div>
           </div>
 
-          {/* Filter chips */}
-          <div className="flex flex-wrap gap-2">
+          {/* Term toggle */}
+          <div className="flex gap-2 bg-surface-container-high rounded-full p-1">
             <button
-              onClick={() => setSelectedSubject("All")}
+              onClick={() => {
+                setSelectedTerm("current");
+                setSelectedCourse(null);
+                setPreviewNoteId(null);
+              }}
               className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-                selectedSubject === "All"
+                selectedTerm === "current"
                   ? "bg-primary text-on-primary shadow-lg"
-                  : "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest"
+                  : "text-on-surface-variant hover:bg-surface-container-highest"
               }`}
             >
-              All
+              Current Term
             </button>
-            {loadingCourses ? (
-              <Skeleton className="h-7 w-20 rounded-full" />
-            ) : (
-              courses.map((course) => (
-                <button
-                  key={course.id}
-                  onClick={() => setSelectedSubject(course.name)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-                    selectedSubject === course.name
-                      ? "bg-primary text-on-primary shadow-lg"
-                      : "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest"
-                  }`}
-                >
-                  {course.name}
-                </button>
-              ))
-            )}
+
+            <button
+              onClick={() => {
+                setSelectedTerm("past");
+                setSelectedCourse(null);
+                setPreviewNoteId(null);
+              }}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+                selectedTerm === "past"
+                  ? "bg-primary text-on-primary shadow-lg"
+                  : "text-on-surface-variant hover:bg-surface-container-highest"
+              }`}
+            >
+              Past Terms
+            </button>
           </div>
         </div>
 
-        {/* Uploaded notes list */}
-<div className="space-y-3">
-  {loadingNotes ? (
-    <>
-      <Skeleton className="h-16 rounded-lg" />
-      <Skeleton className="h-16 rounded-lg" />
-      <Skeleton className="h-16 rounded-lg" />
-    </>
-  ) : filteredNotes.length === 0 ? (
-    <div className="bg-surface-container border border-outline-variant rounded-lg p-6 text-center">
-      <span
-        className="material-symbols-outlined text-on-surface-variant"
-        style={{ fontSize: 32 }}
-      >
-        folder_off
-      </span>
+        {/* Course folders / selected course notes */}
+        {loadingCourses || loadingNotes ? (
+          <div className="space-y-3">
+            <Skeleton className="h-20 rounded-lg" />
+            <Skeleton className="h-20 rounded-lg" />
+            <Skeleton className="h-20 rounded-lg" />
+          </div>
+        ) : selectedCourse ? (
+          <div>
+            <button
+              onClick={() => {
+                setSelectedCourse(null);
+                setPreviewNoteId(null);
+              }}
+              className="mb-5 text-sm text-primary hover:underline flex items-center gap-1"
+            >
+              ← Back to courses
+            </button>
 
-      <p className="text-sm text-on-surface-variant mt-2">
-        No notes found for this class.
-      </p>
-    </div>
-  ) : (
-    filteredNotes.map((note) => (
-      <div key={note.id}>
-        <NoteCard
-          note={note}
-          isPreviewOpen={previewNoteId === note.id}
-          onPreviewToggle={() =>
-            setPreviewNoteId(
-              previewNoteId === note.id ? null : note.id
-            )
-          }
-        />
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-11 h-11 rounded-lg bg-primary-container flex items-center justify-center">
+                <span
+                  className="material-symbols-outlined text-on-primary"
+                  style={{ fontSize: 24 }}
+                >
+                  folder
+                </span>
+              </div>
 
-        {/* Inline PDF preview */}
-        {previewNoteId === note.id && (
-          <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
-            <iframe
-              src={
-                note.drive_file_id
-                  ? `https://drive.google.com/file/d/${note.drive_file_id}/preview`
-                  : `/api/files/${note.filename}`
-              }
-              title={note.filename}
-              className="w-full"
-              style={{ height: "520px", border: "none" }}
-            />
+              <div>
+                <h2 className="font-display text-2xl font-bold text-on-surface">
+                  {getCourseLabel(selectedCourse)}
+                </h2>
+                <p className="text-sm text-on-surface-variant">
+                  {selectedCourseNotes.length} uploaded notes
+                </p>
+              </div>
+            </div>
+
+            {selectedCourseNotes.length === 0 ? (
+              <div className="bg-surface-container border border-outline-variant rounded-lg p-6 text-center">
+                <span
+                  className="material-symbols-outlined text-on-surface-variant"
+                  style={{ fontSize: 32 }}
+                >
+                  folder_off
+                </span>
+
+                <p className="text-sm text-on-surface-variant mt-2">
+                  No notes uploaded for this course yet.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {selectedCourseNotes.map((note) => (
+                  <div key={note.id}>
+                    <NoteCard
+                      note={note}
+                      isPreviewOpen={previewNoteId === note.id}
+                      onPreviewToggle={() =>
+                        setPreviewNoteId(previewNoteId === note.id ? null : note.id)
+                      }
+                    />
+
+                    {previewNoteId === note.id && (
+                      <div className="bg-[#2d2f3e] rounded-b-lg overflow-hidden border-t border-white/5">
+                        <iframe
+                          src={
+                            note.drive_file_id
+                              ? `https://drive.google.com/file/d/${note.drive_file_id}/preview`
+                              : `/api/files/${note.filename}`
+                          }
+                          title={note.filename}
+                          className="w-full"
+                          style={{ height: "520px", border: "none" }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {visibleCourses.length === 0 ? (
+              <div className="bg-surface-container border border-outline-variant rounded-lg p-6 text-center md:col-span-2 xl:col-span-3">
+                <span
+                  className="material-symbols-outlined text-on-surface-variant"
+                  style={{ fontSize: 32 }}
+                >
+                  folder_off
+                </span>
+
+                <p className="text-sm text-on-surface-variant mt-2">
+                  No {selectedTerm === "current" ? "current-term" : "past-term"} courses found.
+                </p>
+              </div>
+            ) : (
+              visibleCourses.map((course) => {
+                const courseNotes = getNotesForCourse(course);
+
+                return (
+                  <button
+                    key={course.id}
+                    onClick={() => {
+                      setSelectedCourse(course);
+                      setPreviewNoteId(null);
+                    }}
+                    className="bg-surface-container border border-outline-variant hover:border-primary/50 rounded-xl p-5 text-left transition-all group"
+                  >
+                    <div className="flex items-start gap-4 mb-5">
+                      <div className="w-12 h-12 rounded-lg bg-primary-container flex items-center justify-center shrink-0">
+                        <span
+                          className="material-symbols-outlined text-on-primary"
+                          style={{ fontSize: 26 }}
+                        >
+                          folder
+                        </span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-on-surface group-hover:text-primary transition-colors truncate">
+                          {course.name}
+                        </h3>
+
+                        <p className="text-xs text-on-surface-variant mt-1 truncate">
+                          {course.section || course.subject || "Class Notes"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 mb-5">
+                      {courseNotes.slice(0, 2).map((note) => (
+                        <div
+                          key={note.id}
+                          className="bg-surface-container-lowest rounded-md px-3 py-2 text-xs text-on-surface-variant truncate flex items-center gap-2"
+                        >
+                          <span
+                            className="material-symbols-outlined text-error"
+                            style={{ fontSize: 15 }}
+                          >
+                            picture_as_pdf
+                          </span>
+                          {note.filename}
+                        </div>
+                      ))}
+
+                      {courseNotes.length === 0 && (
+                        <div className="bg-surface-container-lowest rounded-md px-3 py-2 text-xs text-on-surface-variant">
+                          No notes uploaded yet
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-on-surface-variant">
+                      <span>{courseNotes.length} Notes</span>
+                      <span>
+                        {course.courseState === "ACTIVE" ? "Active" : "Archived"}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
           </div>
         )}
-      </div>
-    ))
-  )}
-</div>
 
         {/* Classroom Materials */}
-        {(loadingMaterials || classroomMaterials.filter(c => selectedSubject === "All" || c.courseName === selectedSubject).length > 0) && (
+        {selectedCourse && (
           <div className="mt-10">
             <h2 className="font-display text-2xl font-semibold text-on-surface mb-5 flex items-center gap-2">
               <span className="material-symbols-outlined text-tertiary" style={{ fontSize: 22 }}>class</span>
@@ -238,7 +416,7 @@ async function fetchClassroomMaterials() {
               </div>
             ) : (
              classroomMaterials
-              .filter((courseData) => selectedSubject === "All" || courseData.courseName === selectedSubject)
+              .filter((courseData) => courseData.courseId === selectedCourse.id)
               .map((courseData) => (
                 <div key={courseData.courseId} className="mb-8">
                   <div className="flex items-center gap-2 mb-3 pb-2 border-b border-outline-variant">

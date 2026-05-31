@@ -304,6 +304,59 @@ def get_materials(request: Request):
         "materials": materials,
     })
 
+@router.get("/materials/all")
+def get_all_course_materials(request: Request):
+    user = request.session.get("user")
+
+    if not user:
+        raise HTTPException(status_code=401, detail="User is not logged in")
+
+    access_token = request.session.get("access_token")
+
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Google Classroom is not connected"
+        )
+
+    try:
+        courses_data = get_classroom_courses(access_token)
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+
+        request.session.pop("access_token", None)
+
+        if status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail="Google Classroom connection expired. Please reconnect."
+            )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch Google Classroom courses"
+        )
+
+    raw_courses = courses_data.get("courses", [])
+
+    all_courses = []
+    seen_course_ids = set()
+
+    for course in raw_courses:
+        course_id = course.get("id")
+
+        if not course_id or course_id in seen_course_ids:
+            continue
+
+        seen_course_ids.add(course_id)
+        all_courses.append(serialize_course(course))
+
+    materials = get_all_materials_for_courses(access_token, all_courses)
+
+    return JSONResponse(content={
+        "user": user,
+        "materials": materials,
+    })
 
 @router.get("/term-info")
 def get_term_info():

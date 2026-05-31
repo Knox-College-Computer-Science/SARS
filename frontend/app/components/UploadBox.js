@@ -25,7 +25,6 @@ export default function UploadBox() {
 
   useEffect(() => { fetchCourses(); }, []);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
