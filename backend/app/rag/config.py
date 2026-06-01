@@ -1,70 +1,118 @@
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
-RAG_BASE_DIR = Path(__file__).resolve().parent
-BACKEND_DIR  = RAG_BASE_DIR.parent.parent
-STORAGE_DIR  = BACKEND_DIR / "rag_storage"
+load_dotenv()
 
-CHROMA_DIR      = STORAGE_DIR / "chroma_db"      # ChromaDB persistent store
-CHUNK_STORE_DIR = STORAGE_DIR / "chunk_store"    # JSON files for context/parents
-EVAL_LOG_DIR    = STORAGE_DIR / "eval_logs"      # Retrieval evaluation logs
-UPLOAD_DIR      = BACKEND_DIR / "RAG_Uploads"    # Raw uploaded PDFs
 
-### Embedding ###
+### PATHS ###
 
-EMBED_MODEL      = "nomic-embed-text"
-EMBED_DIMENSIONS = 768
+RAG_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "RAG_Uploads"
+RAG_UPLOADS_DIR.mkdir(exist_ok=True)
 
-### Generation ###
+PARSE_CACHE_DIR = Path(__file__).resolve().parent / "storage" / "parse_cache"
+PARSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-LLM_MODEL    = "llama3.2"
-VISION_MODEL = "llava"        # For image captioning
-MEMORY_WINDOW = 6             # Number of conversation turns sent to LLM
 
-### Chunking Thresholds ###
+### EMBEDDING ###
 
-CHUNK_MIN_CHARS               = 200
-CHUNK_SEMANTIC_TRIGGER        = 600
-SEMANTIC_BREAKPOINT_PERCENTILE = 80
+EMBEDDING_PROVIDER  = os.getenv("EMBEDDING_PROVIDER", "google")
+EMBEDDING_MODEL     = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+EMBEDDING_DIMENSION = 768
+EMBEDDING_BATCH_SIZE = 100
 
-IMAGE_MIN_CAPTION_CHARS = 20
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
-### Retrieval ###
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "")
+HUGGINGFACE_MODEL   = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
 
-TOP_K_VECTOR   = 20
-TOP_K_BM25     = 20
-TOP_K_FINAL    =  5
+GOOGLE_API_KEY          = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_EMBEDDING_MODEL  = "gemini-embedding-001"
 
-### Hybrid Search Weights ###
 
-VECTOR_WEIGHT  = 0.6
-BM25_WEIGHT    = 0.4
+### GROQ ###
 
-DEDUP_JACCARD_THRESHOLD = 0.85
+LLM_PROVIDER    = os.getenv("LLM_PROVIDER", "groq")
+_default_models = {
+    "groq":       "llama-3.3-70b-versatile",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "google":     "gemini-2.0-flash",
+}
+LLM_MODEL       = os.getenv("LLM_MODEL", _default_models.get(LLM_PROVIDER, "llama-3.3-70b-versatile"))
+LLM_TEMPERATURE = 0.1
+LLM_MAX_TOKENS  = 1024
 
-### Multi-query expansion ###
-MULTIQUERY_ENABLED = True
-MULTIQUERY_VARIANTS = 3
+GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 
-# Prompt used to generate query alternatives.
 
-MULTIQUERY_PROMPT_TEMPLATE = """\
-Generate {n} alternative search queries for the question below.
-Each alternative should use different wording but ask the same thing.
-Return ONLY the alternatives, one per line, no numbering, no extra text.
+### CHUNKING ###
 
-Question: {query}
+CHUNK_MIN_CHARS    = 300
+CHUNK_MAX_CHARS    = 1200
+CHUNK_OVERLAP_CHARS = 100
+SLIDE_MERGE_THRESHOLD = 400
 
-Alternatives:"""
 
-### ChromaDB ###
+### RETRIEVAL ###
 
-COLLECTION_PREFIX = "SARS_"
+VECTOR_SEARCH_TOP_K = 20
+BM25_SEARCH_TOP_K   = 20
 
-###  Evaluation logging ###
+RERANK_TOP_K     = 8
+RERANK_THRESHOLD = 0.3
+RERANKING_BATCH_SIZE = 32
 
-EVAL_LOGGING_ENABLED = True
-EVAL_LOG_FILE = EVAL_LOG_DIR / "retrieval_log.jsonl"
+QUERY_VARIANTS_COUNT        = 3
+HYBRID_SEARCH_WEIGHT_VECTOR = 0.6
+HYBRID_SEARCH_WEIGHT_BM25   = 0.4
 
-# Ensure storage directories exist
-for _dir in [STORAGE_DIR, CHROMA_DIR, CHUNK_STORE_DIR, EVAL_LOG_DIR, UPLOAD_DIR]:
-    _dir.mkdir(parents=True, exist_ok=True)
+
+### CONTEXT WINDOW ###
+
+TOTAL_CONTEXT_BUDGET  = 6000
+HISTORY_MAX_TOKENS    = 2000
+RETRIEVAL_MAX_TOKENS  = 4000
+RETRIEVAL_MEMORY_WINDOW = 10
+
+
+### QUALITY GATES ###
+
+QUALITY_TIER_HIGH_MIN_CHARS      = 150
+QUALITY_TIER_HIGH_MIN_DIVERSITY  = 0.5
+QUALITY_TIER_MEDIUM_MIN_CHARS    = 80
+QUALITY_TIER_MEDIUM_MIN_DIVERSITY = 0.35
+QUALITY_TIER_LOW_MIN_CHARS       = 20
+
+
+### CIRCUIT BREAKER ###
+
+CIRCUIT_BREAKER_ENABLED           = True
+CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5
+CIRCUIT_BREAKER_RESET_TIMEOUT_SECONDS = 30
+
+
+### INDEXING ###
+
+DUPLICATE_DETECTION_ENABLED = True
+PARSE_RESULT_CACHE_ENABLED  = True
+
+IMAGE_EXTRACTION_ENABLED = False
+IMAGE_CAPTION_ENABLED    = True
+IMAGE_CAPTION_MODEL      = LLM_MODEL
+
+
+### LOGGING ###
+
+EVAL_LOG_ENABLED = True
+
+
+### FEATURE FLAGS ###
+
+MULTIQUERY_ENABLED      = False # False for now for managing rates. If running local, can enable.
+CONTEXT_PACKING_ENABLED = True
+SIBLING_CONTEXT_ENABLED = True
+RERANKING_ENABLED       = True
+BM25_CACHE_ENABLED      = True
+
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"

@@ -1,92 +1,88 @@
-
 import logging
-from typing import Optional
+from typing import List
 
-from app.rag.config import MEMORY_WINDOW
-from app.rag.models import RetrievedResult
+from app.rag.config import HISTORY_MAX_TOKENS, RETRIEVAL_MEMORY_WINDOW
 
-logger = logging.getLogger("nexus.rag.prompt_builder")
+logger = logging.getLogger(__name__)
 
-# If a context chunk is shorter than this, use the parent text instead.
-# Parent text is richer but may contain off-topic content from the section.
-_SHORT_CHUNK_THRESHOLD = 150  # chars
+CHARS_PER_TOKEN = 4
 
-SYSTEM_PROMPT = """\
-You are Nexus AI, a course assistant embedded in a student's course hub.
-You answer questions STRICTLY using the retrieved course materials provided below.
+
+### SYSTEM PROMPTS ###
+
+_BASE_SYSTEM = """You are SARS AI, a course assistant for {course_name}.
+
+Your job is to answer student questions using only the provided course materials.
 
 Rules:
-1. Ground every factual claim in the provided sources.
-2. Cite sources inline using [1], [2], etc. immediately after the claim.
-3. If a source is a table, interpret the data accurately and cite the table number.
-4. If a source is an image description, note you are referring to a visual.
-5. If the answer cannot be found in the provided materials, say clearly:
-   "I couldn't find that in the uploaded course materials."
-   Do NOT guess or invent information.
-6. Be concise but complete. Use markdown formatting where it aids clarity.
-7. Do not describe your retrieval process — just answer naturally.\
-"""
+- Only use information from the retrieved materials below
+- If the answer is not in the materials, say so clearly — do not guess
+- Cite sources inline using the format [filename, p.N]
+- Be concise and direct"""
+
+_CONFIDENCE_INSTRUCTIONS = {
+    "high":   "",
+    "medium": "\nNote: Retrieval confidence is moderate. Mention if you are uncertain about any specific detail.",
+    "low":    "\nNote: Retrieval confidence is low. Clearly state that the materials may not fully address this question.",
+    "none":   "\nNote: No relevant materials were found. Tell the student you could not find an answer in the course materials.",
+}
+
+_INTENT_INSTRUCTIONS = {
+    "table_lookup": "\nFor this query: Read any tables row by row to find exact values. Quote the exact figure.",
+    "conceptual":   "\nFor this query: Provide a thorough explanation with examples from the materials.",
+    "factual":      "\nFor this query: Give a direct, specific answer with the exact source cited.",
+    "planning":     "\nFor this query: Consider any prerequisites or sequences mentioned in the materials.",
+    "syllabus":     "\nFor this query: Look for exact dates, policies, or grading information in the materials.",
+}
 
 
-def build_prompt(
-    query:                str,
-    results:              list[RetrievedResult],
-    conversation_history: list[dict],
-) -> list[dict]:
+### HISTORY TRIMMING ###
 
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+def _trim_history(history: List[dict]) -> List[dict]:
+    if not history:
+        return []
 
-    # ── Conversation history (sliding window) ────────────────────
-    for turn in conversation_history[-MEMORY_WINDOW:]:
-        if turn.get("role") in ("user", "assistant") and turn.get("content"):
-            messages.append({"role": turn["role"], "content": turn["content"]})
+    trimmed = history[-RETRIEVAL_MEMORY_WINDOW:]
+    total_chars = sum(len(m.get("content", "")) for m in trimmed)
+    max_chars   = HISTORY_MAX_TOKENS * CHARS_PER_TOKEN
 
-    # ── Context block ────────────────────────────────────────────
-    context_lines: list[str] = ["## Retrieved Course Materials\n"]
+    while trimmed and total_chars > max_chars:
+        removed     = trimmed.pop(0)
+        total_chars -= len(removed.get("content", ""))
 
-    for i, result in enumerate(results, 1):
-        citation = result.citation_label
-        rc       = result.retrieval_chunk
+    return trimmed
 
-        # Choose the content the LLM should read:
-        #  - For tables: use markdown (formatted_content)
-        #  - For short chunks: use parent text (richer context)
-        #  - Otherwise: use context chunk text (header + retrieval text)
-        if rc.element_type == "table" and rc.formatted_content:
-            content = _table_content(rc.formatted_content, citation)
 
-        elif (
-            result.context_chunk
-            and len(result.context_chunk.text) < _SHORT_CHUNK_THRESHOLD
-            and result.parent_chunk
-        ):
-            # Chunk is very short — send the full parent section instead
-            content = result.parent_chunk.text
-            logger.debug(f"Using parent text for short chunk [{i}]")
+### PUBLIC API ###
 
-        elif result.context_chunk:
-            content = result.context_chunk.text   # Header + chunk text
+def build_messages(
+    query: str,
+    context_block: str,
+    history: List[dict],
+    course_name: str,
+    confidence: str = "high",
+    intent: str = "factual",
+) -> List[dict]:
+    system_text = _BASE_SYSTEM.format(course_name=course_name)
+    system_text += _CONFIDENCE_INSTRUCTIONS.get(confidence, "")
+    system_text += _INTENT_INSTRUCTIONS.get(intent, "")
 
-        else:
-            # Fallback: just the raw retrieval text
-            content = rc.text
+    if context_block:
+        system_text += f"\n\n### RETRIEVED MATERIALS ###\n\n{context_block}"
+    else:
+        system_text += "\n\n### RETRIEVED MATERIALS ###\n\nNo relevant materials found."
 
-        context_lines.append(f"[{i}] ({citation})")
-        context_lines.append(content)
-        context_lines.append("")   # Blank line between sources
+    trimmed_history = _trim_history(history)
 
-    context_block = "\n".join(context_lines)
+    messages = [{"role": "system", "content": system_text}]
+    messages.extend(trimmed_history)
+    messages.append({"role": "user", "content": query})
 
-    # ── Final user message ───────────────────────────────────────
-    user_message = f"{context_block}\n---\n\n**Question:** {query}"
-    messages.append({"role": "user", "content": user_message})
+    total_chars = sum(len(m["content"]) for m in messages)
+    logger.info(
+        f"Built prompt: {len(messages)} messages, "
+        f"~{total_chars // CHARS_PER_TOKEN} tokens "
+        f"(confidence={confidence}, intent={intent})"
+    )
 
     return messages
-
-
-def _table_content(markdown: str, citation: str) -> str:
-    """
-    Format a table for the LLM. Adds a note that this is a table
-    so the LLM treats it structurally rather than as prose.
-    """
-    return f"[This source is a data table from {citation}]\n\n{markdown}"

@@ -1,66 +1,70 @@
-from pathlib import Path
+import logging
 from fastapi import UploadFile
-import uuid
+from sqlalchemy.orm import Session
 
-from app.rag import pipeline  # ← CHANGE THIS (was: from app.rag.rag_pipeline)
+from app.rag import pipeline
 
-UPLOAD_FOLDER = Path(__file__).resolve().parent.parent.parent / "RAG_Uploads"
+logger = logging.getLogger(__name__)
 
 
-async def save_uploaded_file(file: UploadFile, course_id: str):  # ← ADD course_id
-    """Save and index a PDF file for a specific course."""
-    UPLOAD_FOLDER.mkdir(exist_ok=True)
-    file_path = UPLOAD_FOLDER / file.filename
-    file_bytes = await file.read()  # ← Make it async
-
-    # Save to disk
-    with open(file_path, "wb") as buffer:
-        buffer.write(file_bytes)
-
-    # Index using new pipeline with course_id
-    file_id = str(uuid.uuid4())
-    index_result = pipeline.index_document(
-        file_bytes=file_bytes,
-        filename=file.filename,
-        course_id=course_id,  # ← NEW
-        user_id="current_user",  # ← NEW (get from auth later)
-        file_id=file_id,  # ← NEW
+async def upload_and_index(
+    file: UploadFile,
+    course_id: str,
+    user_id: str,
+    db: Session,
+) -> dict:
+    file_bytes = await file.read()
+    result     = pipeline.ingest(
+        db         = db,
+        file_bytes = file_bytes,
+        filename   = file.filename,
+        course_id  = course_id,
+        user_id    = user_id,
     )
-
     return {
-        "file_path": str(file_path),
-        "file_name": file.filename,
-        "file_id": file_id,  # ← NEW
-        "index_result": {
-            "status": index_result.status,
-            "retrieval_chunks": index_result.retrieval_chunks,
-            "parent_chunks": index_result.parent_chunks,
-            "error": index_result.error,
-        },
+        "status":           result.status,
+        "file_id":          result.file_id,
+        "filename":         result.filename,
+        "retrieval_chunks": result.retrieval_chunks,
+        "parent_chunks":    result.parent_chunks,
+        "text_chunks":      result.text_chunks,
+        "table_chunks":     result.table_chunks,
+        "image_chunks":     result.image_chunks,
+        "error":            result.error,
     }
 
 
-def get_chat_answer(question: str, course_id: str, conversation_history: list = None):  # ← ADD course_id, history
-    """Non-streaming chat answer (for testing/simple endpoints)."""
-    if conversation_history is None:
-        conversation_history = []
-
-    return pipeline.answer_question(question, course_id, conversation_history)  # ← PASS all params
-
-
-def stream_chat_answer(question: str, course_id: str, conversation_history: list = None):  # ← ADD THIS NEW FUNCTION
-    """Streaming chat answer (SSE events)."""
-    if conversation_history is None:
-        conversation_history = []
-
-    return pipeline.stream_answer(question, course_id, conversation_history)
-
-
-def list_course_files(course_id: str):  # ← ADD THIS NEW FUNCTION
-    """List all indexed files for a course."""
-    return pipeline.list_course_files(course_id)
+async def stream_answer(
+    question: str,
+    course_id: str,
+    user_id: str,
+    course_name: str,
+    db: Session,
+    history: list = None,
+):
+    async for event in pipeline.query(
+        db          = db,
+        user_query  = question,
+        course_id   = course_id,
+        user_id     = user_id,
+        course_name = course_name,
+        history     = history or [],
+    ):
+        yield event
 
 
-def delete_course_file(course_id: str, file_id: str):  # ← ADD THIS NEW FUNCTION
-    """Delete a file and all its chunks."""
-    return pipeline.delete_course_file(course_id, file_id)
+def list_indexed_files(db: Session, course_id: str) -> list:
+    return pipeline.list_course_files(db, course_id)
+
+
+def delete_indexed_file(db: Session, file_id: str, course_id: str) -> dict:
+    deleted_count = pipeline.delete_course_file(db, file_id, course_id)
+    return {
+        "file_id":       file_id,
+        "deleted_count": deleted_count,
+        "status":        "deleted" if deleted_count >= 0 else "not_found",
+    }
+
+
+def get_indexed_file_status(db: Session, file_id: str) -> dict:
+    return pipeline.get_file_status(db, file_id)

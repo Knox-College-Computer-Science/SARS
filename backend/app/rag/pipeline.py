@@ -1,242 +1,220 @@
 import logging
 import time
 import uuid
-from pathlib import Path
-from typing import Iterator, Optional
+from typing import AsyncGenerator, List, Optional
 
-from app.rag.config import UPLOAD_DIR
-from app.rag.models import IndexResult
-from app.rag.modules.extractor    import extract_elements
-from app.rag.modules.chunker      import chunk_document
-from app.rag.modules.context_chunk     import create_context_chunks
-from app.rag.modules.indexer      import index_all
-from app.rag.modules.multi_query     import generate_query_variants
-from app.rag.modules.retriever    import retrieve_for_query
-from app.rag.modules.merger       import merge_results
-from app.rag.modules.lookup       import enrich_results
-from app.rag.modules.prompt_builder import build_prompt
-from app.rag.modules.generator    import stream_response
-from app.rag.storage              import vector_store, chunk_store, eval_store
+from sqlalchemy.orm import Session
 
-logger = logging.getLogger("SARS.rag.pipeline")
+from app.rag.models import IndexResult, RAGFile, RetrievedResult
+from app.rag.modules.indexer import index_file
+from app.rag.modules.retriever import retrieve, invalidate_bm25_cache
+from app.rag.modules.reranker import rerank, assess_confidence
+from app.rag.modules.context_packer import pack
+from app.rag.modules.multi_query import expand_query, detect_intent
+from app.rag.modules.prompt_builder import build_messages
+from app.rag.modules.generator import stream
+from app.rag.storage.vector_store import delete_file_chunks
+from app.rag.config import EVAL_LOG_ENABLED
 
-### INGESTION ###
+logger = logging.getLogger(__name__)
 
-def index_document(
-    file_bytes: bytes,
-    filename:   str,
-    course_id:  str,
-    user_id:    str = "anonymous",
-    file_id:    Optional[str] = None,
+
+### WRITE PATH ###
+
+def ingest(
+        db: Session,
+        file_bytes: bytes,
+        filename: str,
+        course_id: str,
+        user_id: str,
+        drive_file_id: Optional[str] = None,
+        local_path: Optional[str] = None,
+        file_id: Optional[str] = None,
 ) -> IndexResult:
+    file_id = file_id or str(uuid.uuid4())
+    is_slides = filename.lower().endswith(".pptx")
 
-    if file_id is None:
-        file_id = str(uuid.uuid4())
-
-    logger.info(f"[INGEST] Starting: {filename} → course {course_id}")
-    t_start = time.time()
-
-    # ── Save raw file to disk ────────────────────────────────────
-    _save_to_disk(file_bytes, filename, file_id)
-
-    # ── Extract ──────────────────────────────────────────────────
-    try:
-        elements = extract_elements(file_bytes, filename)
-    except ValueError as e:
-        return IndexResult(
-            file_id=file_id, filename=filename, course_id=course_id,
-            status="error", error=str(e),
-        )
-
-    if not elements:
-        return IndexResult(
-            file_id=file_id, filename=filename, course_id=course_id,
-            status="error",
-            error="No content extracted. Is this a scanned image-only PDF?",
-        )
-
-    # ── Chunk (all three tiers) ───────────────────────────────────
-    parent_chunks, retrieval_chunks = chunk_document(
-        elements  = elements,
-        filename  = filename,
-        file_id   = file_id,
-        course_id = course_id,
-        user_id   = user_id,
+    result = index_file(
+        db=db,
+        file_bytes=file_bytes,
+        filename=filename,
+        file_id=file_id,
+        course_id=course_id,
+        user_id=user_id,
+        drive_file_id=drive_file_id,
+        local_path=local_path,
+        is_slides=is_slides,
     )
 
-    # ── Enrich (create context chunks) ───────────────────────────
-    context_chunks = create_context_chunks(retrieval_chunks)
+    if result.status == "success":
+        invalidate_bm25_cache(course_id)
 
-    # ── Index (embed + store all three tiers) ────────────────────
-    result = index_all(
-        retrieval_chunks = retrieval_chunks,
-        context_chunks   = context_chunks,
-        parent_chunks    = parent_chunks,
-        file_id          = file_id,
-        filename         = filename,
-        course_id        = course_id,
-    )
-
-    result.total_elements = len(elements)
-    elapsed = time.time() - t_start
-    logger.info(
-        f"[INGEST] Done: {filename} in {elapsed:.1f}s — "
-        f"{result.retrieval_chunks} retrieval chunks, "
-        f"{result.parent_chunks} parents, status={result.status}"
-    )
     return result
 
 
+### READ PATH ###
 
-### RETRIEVAL + GENERATION ###
+async def query(
+        db: Session,
+        user_query: str,
+        course_id: str,
+        user_id: str,
+        course_name: str,
+        history: Optional[List[dict]] = None,
+) -> AsyncGenerator[dict, None]:
+    history = history or []
+    start = time.time()
 
+    intent = detect_intent(user_query)
+    variants = expand_query(user_query)
 
-def stream_answer(
-    query:                str,
-    course_id:            str,
-    conversation_history: Optional[list[dict]] = None,
-) -> Iterator[str]:
-    """
-    Full retrieval + generation pipeline. Yields SSE event strings.
-
-    """
-    import json
-
-    if conversation_history is None:
-        conversation_history = []
-
-    t0 = time.time()
-
-    # ── 1. Expand query ──────────────────────────────────────────
-    variants = generate_query_variants(query)
-
-    # ── 2. Hybrid search for each variant ────────────────────────
-    all_raw_results = [
-        retrieve_for_query(variant, course_id)
-        for variant in variants
-    ]
-
-    # ── 3. Merge + deduplicate ───────────────────────────────────
-    top_raw = merge_results(all_raw_results)
-
-    retrieval_latency_ms = (time.time() - t0) * 1000
-
-    if not top_raw:
-        yield _no_docs_event()
-        return
-
-    # ── 4. Enrich with context + parent chunks ───────────────────
-    retrieved = enrich_results(top_raw, course_id)
-
-    # ── 5. Log retrieval for evaluation ─────────────────────────
-    eval_store.log_retrieval(
-        query                = query,
-        course_id            = course_id,
-        query_variants       = variants,
-        results              = retrieved,
-        retrieval_latency_ms = retrieval_latency_ms,
+    retrieved = retrieve(
+        db=db,
+        query=user_query,
+        query_variants=variants,
+        course_id=course_id,
     )
 
-    # ── 6. Build prompt ──────────────────────────────────────────
-    messages = build_prompt(query, retrieved, conversation_history)
+    reranked = await rerank(user_query, retrieved)
+    confidence = assess_confidence(reranked)
 
-    # ── 7. Stream answer ─────────────────────────────────────────
-    yield from stream_response(messages, retrieved)
+    context_block, selected = pack(reranked)
 
+    citations = [
+        {
+            "source": r.retrieval_chunk.source_filename,
+            "section": r.retrieval_chunk.section_heading,
+            "page": r.retrieval_chunk.page_number,
+            "element_type": r.retrieval_chunk.element_type,
+        }
+        for r in selected
+    ]
 
-def answer_question(
-    query:                str,
-    course_id:            str,
-    conversation_history: Optional[list[dict]] = None,
-) -> dict:
-    """
-    Non-streaming version. Collects the full SSE stream and returns a dict.
+    yield {"type": "citations", "citations": citations}
 
-    """
-    import json
+    messages = build_messages(
+        query=user_query,
+        context_block=context_block,
+        history=history,
+        course_name=course_name,
+        confidence=confidence,
+        intent=intent,
+    )
 
-    if conversation_history is None:
-        conversation_history = []
+    full_response = ""
+    async for token in stream(messages):
+        full_response += token
+        yield {"type": "token", "text": token}
 
-    answer_tokens: list[str] = []
-    citations: list[dict]    = []
+    yield {"type": "done"}
 
-    for event_str in stream_answer(query, course_id, conversation_history):
-        if not event_str.startswith("data: "):
-            continue
-        try:
-            event = json.loads(event_str[6:])
-        except json.JSONDecodeError:
-            continue
+    latency_ms = (time.time() - start) * 1000
 
-        if event["type"] == "citations":
-            citations = event.get("citations", [])
-        elif event["type"] == "token":
-            answer_tokens.append(event.get("text", ""))
-        elif event["type"] == "error":
-            return {
-                "answer":           event.get("text", "An error occurred"),
-                "citations":        [],
-                "chunks_retrieved": 0,
-            }
-
-    return {
-        "answer":           "".join(answer_tokens),
-        "citations":        citations,
-        "chunks_retrieved": len(citations),
-    }
-
+    if EVAL_LOG_ENABLED:
+        _log_retrieval(
+            db=db,
+            course_id=course_id,
+            user_id=user_id,
+            query=user_query,
+            variants=variants,
+            results=reranked,
+            confidence=confidence,
+            latency_ms=latency_ms,
+        )
 
 
 ### FILE MANAGEMENT ###
 
-def list_course_files(course_id: str) -> list[dict]:
-    """List all indexed files in a course with metadata."""
-    stats = vector_store.get_collection_stats(course_id)
-    return stats.get("files", [])
+def list_course_files(db: Session, course_id: str) -> list:
+    files = (
+        db.query(RAGFile)
+        .filter(RAGFile.course_id == course_id)
+        .filter(RAGFile.indexing_status != "deleted")
+        .order_by(RAGFile.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "file_id": f.id,
+            "filename": f.filename,
+            "indexing_status": f.indexing_status,
+            "indexed_at": f.indexed_at.isoformat() if f.indexed_at else None,
+            "quality_tier": f.quality_assessment.get("tier") if f.quality_assessment else None,
+            "warnings": f.warnings or [],
+            "file_size": f.file_size,
+            "drive_file_id": f.drive_file_id,
+            "labels": f.labels or [],
+            "source_type": f.source_type,  
+        }
+        for f in files
+    ]
 
 
-def delete_course_file(course_id: str, file_id: str) -> int:
-    """
-    Delete all chunks for a file from all three storage layers.
-    Returns the number of retrieval chunks deleted.
-    """
-    # 1. Remove from ChromaDB (retrieval chunks)
-    deleted = vector_store.delete_by_file_id(course_id, file_id)
+def delete_course_file(db: Session, file_id: str, course_id: str) -> int:
+    rag_file = (
+        db.query(RAGFile)
+        .filter(RAGFile.id == file_id, RAGFile.course_id == course_id)
+        .first()
+    )
 
-    # 2. Remove from chunk store (context + parent chunks)
-    chunk_store.delete_by_file_id(course_id, file_id)
+    if not rag_file:
+        logger.warning(f"File {file_id} not found in course {course_id}")
+        return 0
 
-    logger.info(f"Deleted file {file_id} from course {course_id} ({deleted} retrieval chunks)")
+    deleted = delete_file_chunks(db, file_id)
+
+    rag_file.indexing_status = "deleted"
+    db.commit()
+
+    invalidate_bm25_cache(course_id)
+
+    logger.info(f"Deleted file {file_id}: {deleted} chunks removed")
     return deleted
 
 
-def get_course_stats(course_id: str) -> dict:
-    """Return collection statistics for a course."""
-    return vector_store.get_collection_stats(course_id)
+def get_file_status(db: Session, file_id: str) -> dict:
+    rag_file = db.query(RAGFile).filter(RAGFile.id == file_id).first()
 
+    if not rag_file:
+        return {"status": "not_found"}
 
-### HELPERS ###
-
-def _save_to_disk(file_bytes: bytes, filename: str, file_id: str) -> None:
-    """Save raw PDF to the upload directory for archival."""
-    try:
-        dest = UPLOAD_DIR / f"{file_id}_{filename}"
-        dest.write_bytes(file_bytes)
-        logger.debug(f"Saved PDF to {dest}")
-    except OSError as e:
-        # Non-fatal — indexing can continue even if disk save fails
-        logger.warning(f"Could not save PDF to disk: {e}")
-
-
-def _no_docs_event() -> str:
-    """SSE event when no documents are found for the course."""
-    import json
-    payload = {
-        "type": "error",
-        "text": (
-            "No documents have been indexed for this course yet. "
-            "Please upload a PDF first."
-        ),
+    return {
+        "file_id": rag_file.id,
+        "filename": rag_file.filename,
+        "status": rag_file.indexing_status,
+        "indexed_at": rag_file.indexed_at.isoformat() if rag_file.indexed_at else None,
+        "quality_tier": rag_file.quality_assessment.get("tier") if rag_file.quality_assessment else None,
+        "warnings": rag_file.warnings or [],
+        "file_size": rag_file.file_size,
     }
-    return f"data: {json.dumps(payload)}\n\n"
+
+
+### EVAL LOGGING ###
+
+def _log_retrieval(
+        db: Session,
+        course_id: str,
+        user_id: str,
+        query: str,
+        variants: List[str],
+        results: List[RetrievedResult],
+        confidence: str,
+        latency_ms: float,
+) -> None:
+    try:
+        from app.rag.models import RAGRetrievalLog
+        log = RAGRetrievalLog(
+            course_id=course_id,
+            user_id=user_id,
+            query=query,
+            query_variants=variants,
+            retrieval_latency_ms=latency_ms,
+            num_results=len(results),
+            confidence_level=confidence,
+            hit_at_5=len(results) >= 1,
+            retrieved_chunk_ids=[r.retrieval_chunk.chunk_id for r in results],
+        )
+        db.add(log)
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Retrieval logging failed: {e}")

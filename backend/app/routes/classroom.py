@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 
 from app.services.google_oauth import get_all_announcements_for_courses
 from app.services.google_oauth import get_all_assignments_for_courses
@@ -7,6 +8,8 @@ from app.services.google_oauth import get_all_materials_for_courses
 from app.services.google_oauth import course_has_current_term_activity
 from app.services.google_oauth import get_classroom_courses
 from app.services.knox_calendar import get_current_knox_term_info
+from database import get_db
+from models import Course
 
 import requests
 import re
@@ -92,6 +95,41 @@ def serialize_course(course: dict) -> dict:
         "courseState": course.get("courseState"),
     }
 
+def serialize_db_course(course: Course) -> dict:
+    return {
+        "id": course.school_course_id,
+        "school_course_id": course.school_course_id,
+        "name": course.name,
+        "section": course.course_code,
+        "subject": None,
+        "calendarId": None,
+        "courseState": "ACTIVE" if course.is_active else "ARCHIVED",
+        "term": course.term,
+        "is_active": course.is_active,
+        "is_current_term": course.is_active,
+    }
+
+def split_db_courses(db: Session):
+    courses = db.query(Course).order_by(Course.name).all()
+    current_courses = [serialize_db_course(c) for c in courses if c.is_active]
+    past_courses = [serialize_db_course(c) for c in courses if not c.is_active]
+    return current_courses, past_courses
+
+def enrich_google_course(course: dict, db_course: Course | None, is_current: bool) -> dict:
+    result = serialize_course(course)
+    if db_course:
+        result["school_course_id"] = db_course.school_course_id
+        result["section"] = db_course.course_code or result.get("section")
+        result["term"] = db_course.term
+        result["is_active"] = db_course.is_active
+        result["is_current_term"] = db_course.is_active
+        return result
+
+    result["school_course_id"] = result.get("id")
+    result["is_active"] = is_current
+    result["is_current_term"] = is_current
+    return result
+
 def get_courses_from_google(request: Request):
     access_token = request.session.get("access_token")
 
@@ -171,7 +209,10 @@ def get_courses(request: Request):
     })
 
 @router.get("/courses/upload-options")
-def get_upload_course_options(request: Request):
+def get_upload_course_options(
+    request: Request,
+    db: Session = Depends(get_db),
+):
     user = request.session.get("user")
 
     if not user:
@@ -198,19 +239,22 @@ def get_upload_course_options(request: Request):
                 detail="Google Classroom connection expired. Please reconnect."
             )
 
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to fetch Google Classroom courses"
-        )
+        current_courses, past_courses = split_db_courses(db)
+        return JSONResponse(content={
+            "user": user,
+            "current_courses": current_courses,
+            "past_courses": past_courses,
+            "source": "database",
+            "warning": "Failed to fetch Google Classroom courses; using synced local courses.",
+        })
 
     raw_courses = courses_data.get("courses", [])
     current_term, term_start, term_end = get_current_term_window()
 
-    if not current_term or not term_start or not term_end:
-        raise HTTPException(
-            status_code=500,
-            detail="Could not determine current Knox term."
-        )
+    db_courses = {
+        course.school_course_id: course
+        for course in db.query(Course).all()
+    }
 
     current_courses = []
     past_courses = []
@@ -224,18 +268,27 @@ def get_upload_course_options(request: Request):
 
         seen_course_ids.add(course_id)
 
-        try:
-            if is_current_term_course(
-                course,
-                access_token,
-                current_term,
-                term_start,
-                term_end,
-            ):
-                current_courses.append(serialize_course(course))
-            else:
-                past_courses.append(serialize_course(course))
+        db_course = db_courses.get(course_id)
 
+        try:
+            if db_course:
+                is_current = db_course.is_active
+            elif current_term and term_start and term_end:
+                is_current = is_current_term_course(
+                    course,
+                    access_token,
+                    current_term,
+                    term_start,
+                    term_end,
+                )
+            else:
+                is_current = course.get("courseState") == "ACTIVE"
+
+            serialized = enrich_google_course(course, db_course, is_current)
+            if is_current:
+                current_courses.append(serialized)
+            else:
+                past_courses.append(serialized)
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 request.session.pop("access_token", None)
@@ -245,7 +298,8 @@ def get_upload_course_options(request: Request):
                     detail="Google Classroom connection expired. Please reconnect."
                 )
 
-            past_courses.append(serialize_course(course))
+            serialized = enrich_google_course(course, db_course, False)
+            past_courses.append(serialized)
 
     current_courses.sort(key=lambda course: course.get("name") or "")
     past_courses.sort(key=lambda course: course.get("name") or "")

@@ -9,6 +9,7 @@ const uploadCache = {
 export default function UploadBox() {
   const [file,           setFile          ] = useState(null);
   const [subject,        setSubject       ] = useState("");
+  const [selectedCourse, setSelectedCourse] = useState(null);
   const [noteType,       setNoteType      ] = useState("Lecture Notes");
   const [loading,        setLoading       ] = useState(false);
   const [progress,       setProgress      ] = useState(0);
@@ -25,6 +26,7 @@ export default function UploadBox() {
 
   useEffect(() => { fetchCourses(); }, []);
 
+  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -45,9 +47,15 @@ export default function UploadBox() {
     }
     setLoadingCourses(true);
     try {
-      const res = await fetch("/api/classroom/courses/upload-options", { credentials: "include" });
+      const res = await fetch("/api/classroom/courses/upload-options", {
+        credentials: "include",
+        cache:       "no-store",
+      });
       if (res.status === 401) { setCurrentCourses([]); setPastCourses([]); return; }
-      if (!res.ok) throw new Error("Failed to fetch course upload options");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to fetch course upload options");
+      }
       const data = await res.json();
       uploadCache.currentCourses = data.current_courses || [];
       uploadCache.pastCourses    = data.past_courses    || [];
@@ -67,7 +75,8 @@ export default function UploadBox() {
   }
 
   function handleCourseSelect(course) {
-    setSubject(getCourseLabel(course));
+    setSelectedCourse(course);
+    setSubject(course.name);
     setDropdownOpen(false);
     setOpenGroup(null);
   }
@@ -107,6 +116,7 @@ export default function UploadBox() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("subject", subject);
+    formData.append("course_id", selectedCourse?.id || selectedCourse?.school_course_id || "");
 
     try {
       const res = await fetch("/api/upload", {
@@ -117,7 +127,15 @@ export default function UploadBox() {
       const data = await res.json();
       clearInterval(interval);
       setProgress(100);
-      if (!res.ok) { alert(data.detail || "Upload failed"); return; }
+      if (!res.ok) {
+        const msg = typeof data.detail === "string"
+          ? data.detail
+          : Array.isArray(data.detail)
+            ? data.detail.map(e => e.msg).join(", ")
+            : "Upload failed";
+        alert(msg);
+        return;
+      }
       setLastResult(data);
       removeFile();
       setSubject("");
@@ -195,7 +213,7 @@ export default function UploadBox() {
             <div className="bg-amber-950/30 border-b border-amber-900/50 px-4 py-2 flex items-start gap-2">
               <span className="material-symbols-outlined text-amber-400 mt-0.5" style={{ fontSize: 14 }}>warning</span>
               <p className="text-amber-300 text-xs leading-snug">
-                Preview only — annotations made here won't be uploaded. Save edits first then re-select.
+                Preview only - annotations made here won&apos;t be uploaded. Save edits first then re-select.
               </p>
             </div>
             <iframe src={previewUrl} title="PDF Preview" className="w-full" style={{ height: 400, border: "none" }} />
@@ -306,7 +324,7 @@ export default function UploadBox() {
         </div>
 
         {/* Upload button */}
-        <button onClick={handleUpload} disabled={loading || !file || !subject}
+        <button onClick={handleUpload} disabled={loading || !file || !subject || !selectedCourse}
           className="w-full py-3 bg-primary text-on-primary text-base font-bold rounded-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ boxShadow: "0 4px 24px rgba(180,197,255,0.15)" }}
         >

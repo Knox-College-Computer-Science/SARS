@@ -1,571 +1,929 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import styles from "./page.module.css";
+import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 
-const API = "http://localhost:8000";
-const DEFAULT_COURSE = "course_1";
-
-const TABS = {
-  CHAT: "chat",
-  UPLOAD: "upload",
-  FILES: "files",
-};
-
-const COURSES = [
-  { id: "course_1", name: "Bio 101" },
-  { id: "course_2", name: "Chemistry 201" },
-  { id: "course_3", name: "Physics 301" },
+const LABEL_COLORS = [
+  "var(--color-primary)",
+  "var(--color-secondary-container)",
+  "var(--color-tertiary)",
+  "var(--color-error)",
 ];
 
-export default function AIPage() {
-  const [activeTab, setActiveTab] = useState(TABS.CHAT);
-  const [courseId, setCourseId] = useState(DEFAULT_COURSE);
-  const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content:
-        "Welcome to SARS AI. Upload course materials to get started, then ask questions about them.",
-    },
-  ]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadFile, setUploadFile] = useState(null);
-  const [indexedFiles, setIndexedFiles] = useState([]);
-  const [error, setError] = useState("");
-  const [streamingText, setStreamingText] = useState("");
-  const bottomRef = useRef(null);
+const aiCache = {
+  courses:     null,
+  isConnected: null,
+};
 
-  const storageKey = `sars_chat_history_${courseId}`;
-  const filesKey = `sars_files_${courseId}`;
+function getLabelColor(labelName) {
+  let hash = 0;
+  for (let i = 0; i < labelName.length; i++) {
+    hash = labelName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return LABEL_COLORS[Math.abs(hash) % LABEL_COLORS.length];
+}
+
+function CitationChip({ citation, indexedFiles, onUpdateLabels }) {
+  const [open, setOpen] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const ref = useRef(null);
+
+  const fileData = indexedFiles.find(
+    f => f.filename === citation.source || f.file_id === citation.file_id
+  );
+  const labels   = fileData?.labels || [];
+  const dotColor = getLabelColor(citation.source || "");
 
   useEffect(() => {
-    loadChatHistory();
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  function handleAddLabel() {
+    const trimmed = newLabel.trim();
+    if (!trimmed || labels.includes(trimmed)) return;
+    onUpdateLabels(fileData?.file_id, [...labels, trimmed]);
+    setNewLabel("");
+  }
+
+  function handleRemoveLabel(label) {
+    onUpdateLabels(fileData?.file_id, labels.filter(l => l !== label));
+  }
+
+  const displayName = citation.source?.split("/").pop()?.replace(/\.[^.]+$/, "") || citation.source;
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <button className={styles.citationChip} onClick={() => setOpen(o => !o)}>
+        <span className={styles.citationDot} style={{ background: dotColor }} />
+        {displayName}
+        {citation.page && <span style={{ opacity: 0.5 }}>p.{citation.page}</span>}
+      </button>
+
+      {open && (
+        <div className={styles.labelOverlay}>
+          <div className={styles.labelOverlayHeader}>
+            <span className={styles.labelOverlayTitle}>Label this source</span>
+            <button className={styles.labelOverlayClose} onClick={() => setOpen(false)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+            </button>
+          </div>
+
+          {labels.length > 0 && (
+            <div className={styles.existingLabels}>
+              {labels.map((label, i) => (
+                <span key={i} className={styles.existingLabel}
+                  style={{ color: getLabelColor(label) }}>
+                  {label}
+                  <button className={styles.removeLabelBtn} onClick={() => handleRemoveLabel(label)}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.labelInput}>
+            <input
+              className={styles.labelInputField}
+              value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAddLabel()}
+              placeholder="Add a label…"
+            />
+            <button className={styles.labelAddBtn} onClick={handleAddLabel}>Add</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UploadModal({ courseId, courseName, onClose, onIndexed }) {
+  const [tab,          setTab         ] = useState("local");
+  const [uploadFile,   setUploadFile  ] = useState(null);
+  const [uploading,    setUploading   ] = useState(false);
+  const [error,        setError       ] = useState("");
+  const [notesFiles,   setNotesFiles  ] = useState([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [indexingId,   setIndexingId  ] = useState(null);
+
+  useEffect(() => {
+    function handleKey(e) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (tab !== "notes") return;
+    fetchNotesFiles();
+  }, [tab]);
+
+  async function fetchNotesFiles() {
+    setLoadingNotes(true);
+    try {
+      const res = await fetch(`/api/rag/notes-available?course_id=${courseId}`, {
+        credentials: "include",
+      });
+      if (res.ok) setNotesFiles(await res.json());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingNotes(false);
+    }
+  }
+
+  async function handleLocalUpload() {
+    if (!uploadFile) return;
+    setUploading(true);
+    setError("");
+    const form = new FormData();
+    form.append("file", uploadFile);
+    form.append("course_id", courseId);
+    try {
+      const res = await fetch("/api/rag/upload", {
+        method:      "POST",
+        credentials: "include",
+        body:        form,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        try {
+          const err = JSON.parse(text);
+          throw new Error(err.detail || "Upload failed");
+        } catch {
+          throw new Error(text || "Upload failed");
+        }
+      }
+      onIndexed();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleIndexFromNotes(noteId) {
+    setIndexingId(noteId);
+    setError("");
+    try {
+      const res = await fetch("/api/rag/index-from-notes", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ note_id: noteId, course_id: courseId }),
+      });
+      if (!res.ok) throw new Error("Failed to start indexing");
+      onIndexed();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+      setIndexingId(null);
+    }
+  }
+
+  return (
+    <div className={styles.modalOverlay} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className={styles.modal}>
+        <div className={styles.modalHeader}>
+          <div>
+            <div className={styles.modalTitle}>Add Files</div>
+            <div className={styles.modalSubtitle}>{courseName}</div>
+          </div>
+          <button className={styles.modalClose} onClick={onClose}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
+          </button>
+        </div>
+
+        <div className={styles.modalTabs}>
+          {[
+            { key: "local", label: "From Computer", icon: "upload_file" },
+            { key: "notes", label: "From Notes",    icon: "folder_open" },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`${styles.modalTab} ${tab === t.key ? styles.modalTabActive : ""}`}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.modalBody}>
+          {error && <div className={styles.modalError}>{error}</div>}
+
+          {tab === "local" && (
+            <>
+              <label
+                className={styles.dropzone}
+                onDrop={e => { e.preventDefault(); setUploadFile(e.dataTransfer.files[0]); }}
+                onDragOver={e => e.preventDefault()}
+              >
+                <span className={`material-symbols-outlined ${styles.dropzoneIcon}`}>cloud_upload</span>
+                <div className={styles.dropzoneText}>
+                  {uploadFile ? uploadFile.name : "Choose a file or drag and drop"}
+                </div>
+                <div className={styles.dropzoneHint}>PDF, DOCX, PPTX, TXT, MD</div>
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.pptx,.txt,.md"
+                  style={{ display: "none" }}
+                  onChange={e => setUploadFile(e.target.files[0])}
+                />
+              </label>
+              <button
+                className={styles.indexBtn}
+                onClick={handleLocalUpload}
+                disabled={!uploadFile || uploading}
+              >
+                {uploading ? "Indexing…" : "Index File"}
+              </button>
+            </>
+          )}
+
+          {tab === "notes" && (
+            <div className={styles.notesList}>
+              {loadingNotes ? (
+                [1, 2, 3].map(i => <div key={i} className={styles.skeletonRow} />)
+              ) : notesFiles.length === 0 ? (
+                <div className={styles.emptyNotes}>
+                  <span className={`material-symbols-outlined ${styles.emptyNotesIcon}`}>folder_off</span>
+                  <div className={styles.emptyNotesText}>No unindexed notes found for this course</div>
+                </div>
+              ) : notesFiles.map(note => (
+                <div key={note.note_id} className={styles.noteRow}>
+                  <div className={styles.noteRowLeft}>
+                    <span className={`material-symbols-outlined ${styles.noteRowIcon}`}>insert_drive_file</span>
+                    <span className={styles.noteRowName}>{note.filename}</span>
+                  </div>
+                  {note.already_indexed ? (
+                    <span className={styles.noteIndexedBadge}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span>
+                      Indexed
+                    </span>
+                  ) : indexingId === note.note_id ? (
+                    <span className={styles.noteIndexedBadge}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>pending</span>
+                      Starting…
+                    </span>
+                  ) : (
+                    <button
+                      className={styles.noteIndexBtn}
+                      onClick={() => handleIndexFromNotes(note.note_id)}
+                      disabled={indexingId !== null}
+                    >
+                      Index
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function AIPage() {
+  const [isConnected,        setIsConnected       ] = useState(aiCache.isConnected ?? false);
+  const [checkingConnection, setCheckingConnection] = useState(aiCache.courses === null);
+  const [courses,            setCourses           ] = useState(aiCache.courses ?? []);
+  const [courseId,           setCourseId          ] = useState("");
+  const [messages,           setMessages          ] = useState([]);
+  const [input,              setInput             ] = useState("");
+  const [loading,            setLoading           ] = useState(false);
+  const [streamingText,      setStreamingText     ] = useState("");
+  const [error,              setError             ] = useState("");
+  const [indexedFiles,       setIndexedFiles      ] = useState([]);
+  const [uploadModalOpen,    setUploadModalOpen   ] = useState(false);
+  const [filter,             setFilter            ] = useState("all");
+  const [pastOpen,           setPastOpen          ] = useState(false);
+  const bottomRef   = useRef(null);
+  const textareaRef = useRef(null);
+
+  const storageKey   = `sars_chat_history_${courseId}`;
+  const course       = courses.find(c => c.id === courseId);
+  const courseName   = course?.name || courseId;
+
+  const currentCourses = courses.filter(c => c.is_current_term !== false);
+  const pastCourses    = courses.filter(c => c.is_current_term === false);
+
+  useEffect(() => { checkGoogleConnection(); }, []);
+
+  useEffect(() => {
+    if (!courseId) return;
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try { setMessages(JSON.parse(saved)); }
+      catch { setMessages([defaultWelcome()]); }
+    } else {
+      setMessages([defaultWelcome()]);
+    }
     fetchIndexedFiles();
   }, [courseId]);
+
+  useEffect(() => {
+    if (messages.length > 0)
+      localStorage.setItem(storageKey, JSON.stringify(messages));
+  }, [messages, courseId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText]);
 
   useEffect(() => {
-    saveChatHistory();
-  }, [messages, courseId]);
+    const hasProcessing = indexedFiles.some(f => f.indexing_status === "processing");
+    if (!hasProcessing) return;
+    const timer = setInterval(fetchIndexedFiles, 3000);
+    return () => clearInterval(timer);
+  }, [indexedFiles, courseId]);
 
-  const loadChatHistory = () => {
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        setMessages(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load chat history:", e);
-      }
-    } else {
-      setMessages([
-        {
-          role: "assistant",
-          content:
-            "Welcome to SARS AI. Upload course materials to get started, then ask questions about them.",
-        },
-      ]);
-    }
-  };
-
-  const saveChatHistory = () => {
-    localStorage.setItem(storageKey, JSON.stringify(messages));
-  };
-
-  const fetchIndexedFiles = async () => {
+  async function checkGoogleConnection() {
+    setCheckingConnection(true);
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch(`${API}/rag/files/${courseId}`);
+      const res  = await fetch("/api/auth/google/me", {
+        credentials: "include",
+        signal:      controller.signal,
+      });
+      if (!res.ok) { setIsConnected(false); aiCache.isConnected = false; return; }
+      const data      = await res.json();
+      const connected = Boolean(data.user && data.has_access_token);
+      setIsConnected(connected);
+      aiCache.isConnected = connected;
+      if (connected) fetchCourses();
+    } catch (err) {
+      if (err.name !== "AbortError") console.error(err);
+      setIsConnected(false);
+      aiCache.isConnected = false;
+    } finally {
+      clearTimeout(timeout);
+      setCheckingConnection(false);
+    }
+  }
+
+  async function fetchCourses() {
+    try {
+      const res     = await fetch("/api/classroom/courses/upload-options", {
+        credentials: "include",
+        cache:       "no-store",
+      });
+      if (res.status === 401) { setIsConnected(false); return; }
+      if (!res.ok) throw new Error("Failed to fetch courses");
+      const data    = await res.json();
+      const current = (data.current_courses || []).map(c => ({ ...c, is_current_term: true }));
+      const past    = (data.past_courses || []).map(c => ({ ...c, is_current_term: false }));
+      const fetched = [...current, ...past];
+      aiCache.courses = fetched;
+      setCourses(fetched);
+      if (fetched.length > 0) setCourseId(fetched[0].id);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function fetchIndexedFiles() {
+    if (!courseId) return;
+    try {
+      const res = await fetch(`/api/rag/files?course_id=${courseId}`, {
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         setIndexedFiles(data.files || []);
-        localStorage.setItem(filesKey, JSON.stringify(data.files || []));
       }
-    } catch (e) {
-      console.error("Failed to fetch files:", e);
-      const cached = localStorage.getItem(filesKey);
-      if (cached) {
-        setIndexedFiles(JSON.parse(cached));
-      }
+    } catch (err) {
+      console.error(err);
     }
-  };
+  }
 
-  const deduplicateCitations = (citations) => {
-    if (!citations || citations.length === 0) return [];
+  async function handleDeleteFile(filename, fileId) {
+    if (!window.confirm(`Delete "${filename}" and all its indexed chunks?`)) return;
+    try {
+      const res = await fetch(`/api/rag/files/${fileId}?course_id=${courseId}`, {
+        method:      "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) {
+        fetchIndexedFiles();
+        setMessages(prev => [...prev, { role: "system", content: `Deleted ${filename}.` }]);
+      }
+    } catch (err) {
+      setError(`Failed to delete: ${err.message}`);
+    }
+  }
 
+  async function handleSendToNotes(fileId) {
+    try {
+      const res = await fetch("/api/rag/send-to-notes", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ file_id: fileId, course_id: courseId }),
+      });
+      if (res.ok) {
+        fetchIndexedFiles();
+        setMessages(prev => [...prev, { role: "system", content: "Added file to Notes." }]);
+      } else {
+        const err = await res.json();
+        setError(err.detail || "Failed to add to Notes");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleUpdateLabels(fileId, labels) {
+    try {
+      await fetch(`/api/rag/files/${fileId}/labels`, {
+        method:      "PATCH",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ labels }),
+      });
+      fetchIndexedFiles();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function defaultWelcome() {
+    return {
+      role:    "assistant",
+      content: "Welcome to SARS AI. Upload course materials and ask questions about them.",
+    };
+  }
+
+  function deduplicateCitations(citations) {
+    if (!citations?.length) return [];
     const seen = new Set();
-    return citations.filter((c) => {
+    return citations.filter(c => {
       const key = `${c.source}|${c.section}|${c.page}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  };
+  }
 
-  const handleStreamingChat = async (question) => {
-    const userMsg = { role: "user", content: question };
-    setMessages((prev) => [...prev, userMsg]);
+  async function handleSend() {
+    const q = input.trim();
+    if (!q || loading) return;
+    console.log("Chat payload:", { query: q, course_id: courseId, course_name: courseName });
+
+    setMessages(prev => [...prev, { role: "user", content: q }]);
     setInput("");
     setLoading(true);
     setStreamingText("");
     setError("");
 
+    if (textareaRef.current) textareaRef.current.style.height = "56px";
+
     try {
-      const url = new URL(`${API}/rag/chat/stream`);
-      url.searchParams.append("query", question);
-      url.searchParams.append("course_id", courseId);
+      const history = messages
+        .filter(m => m.role !== "system")
+        .map(m => ({ role: m.role, content: m.content }));
 
-      const response = await fetch(url.toString());
+      const res = await fetch("/api/rag/chat", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({
+          query:       q,
+          course_id:   courseId,
+          course_name: courseName,
+          history,
+        }),
+      });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const reader = response.body.getReader();
+      const reader  = res.body.getReader();
       const decoder = new TextDecoder();
       let citations = [];
-      let fullText = "";
+      let fullText  = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const event = JSON.parse(line.slice(6));
-
-              if (event.type === "citations") {
-                citations = deduplicateCitations(event.citations || []);
-              } else if (event.type === "token") {
-                fullText += event.text || "";
-                setStreamingText(fullText);
-              } else if (event.type === "done") {
-                continue;
-              } else if (event.type === "error") {
-                throw new Error(event.text || "Unknown error");
-              }
-            } catch (e) {
-              console.error("Failed to parse SSE event:", e);
-            }
+        for (const line of chunk.split("\n\n")) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "citations")
+              citations = deduplicateCitations(event.citations || []);
+            else if (event.type === "token") {
+              fullText += event.text || "";
+              setStreamingText(fullText);
+            } else if (event.type === "error")
+              throw new Error(event.error || "Unknown error");
+          } catch (e) {
+            if (e.message !== "Unknown error") console.error("SSE parse:", e);
+            else throw e;
           }
         }
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: fullText,
-          citations: citations,
-        },
-      ]);
+      setMessages(prev => [...prev, { role: "assistant", content: fullText, citations }]);
       setStreamingText("");
-    } catch (e) {
-      setError(e.message);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Error: ${e.message}. Make sure Ollama is running.`,
-        },
-      ]);
+    } catch (err) {
+      setError(err.message);
+      setMessages(prev => [...prev, {
+        role:    "assistant",
+        content: `Something went wrong: ${err.message}`,
+      }]);
     } finally {
       setLoading(false);
     }
+  }
+
+  const FILE_ICONS = {
+    pdf:  { icon: "picture_as_pdf", color: "var(--color-error)"              },
+    docx: { icon: "article",        color: "var(--color-primary)"            },
+    pptx: { icon: "co_present",     color: "var(--color-tertiary)"           },
+    txt:  { icon: "text_snippet",   color: "var(--color-on-surface-variant)" },
+    md:   { icon: "text_snippet",   color: "var(--color-on-surface-variant)" },
   };
 
-  const handleSend = async () => {
-    const q = input.trim();
-    if (!q || loading) return;
-    await handleStreamingChat(q);
-  };
+  function getFileIcon(filename) {
+    const ext = filename?.split(".").pop()?.toLowerCase();
+    return FILE_ICONS[ext] || { icon: "insert_drive_file", color: "var(--color-on-surface-variant)" };
+  }
 
-  const handleRagUpload = async () => {
-    if (!uploadFile) return;
-    setUploadLoading(true);
-    setError("");
+  const notInNotes   = indexedFiles.filter(f => !f.drive_file_id);
+  const displayFiles = filter === "not_in_notes" ? notInNotes : indexedFiles;
 
-    const form = new FormData();
-    form.append("file", uploadFile);
+  if (checkingConnection) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-on-surface-variant">Checking connection…</p>
+        </div>
+      </div>
+    );
+  }
 
-    try {
-      const url = new URL(`${API}/rag/upload`);
-      url.searchParams.append("course_id", courseId);
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8 gap-6">
+        <div className="text-center">
+          <h1 className="font-display text-4xl font-bold text-on-surface tracking-tight">AI Assistant</h1>
+          <p className="text-sm text-on-surface-variant mt-2">Connect Google Classroom to get started</p>
+        </div>
+        <ConnectGoogleClassroomCard message="Connect Google Classroom to access your courses and use the AI assistant with your actual course materials." />
+      </div>
+    );
+  }
 
-      const res = await fetch(url.toString(), { method: "POST", body: form });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Upload failed");
-      }
-
-      const data = await res.json();
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          content: `✓ Indexed ${data.file?.file_name} (${data.file?.index_result?.retrieval_chunks} chunks)`,
-        },
-      ]);
-      setUploadFile(null);
-      fetchIndexedFiles();
-      setActiveTab(TABS.CHAT);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setUploadLoading(false);
-    }
-  };
-
-  const handleDeleteFile = async (fileName, fileId) => {
-    if (!window.confirm(`Delete ${fileName}?`)) return;
-
-    try {
-      const res = await fetch(
-        `${API}/rag/files/${courseId}/${fileId}`,
-        { method: "DELETE" }
-      );
-
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "system",
-            content: `✓ Deleted ${fileName} (${data.deleted_chunks} chunks removed)`,
-          },
-        ]);
-        fetchIndexedFiles();
-      }
-    } catch (e) {
-      setError(`Failed to delete file: ${e.message}`);
-    }
-  };
-
-  const courseName = COURSES.find((c) => c.id === courseId)?.name || courseId;
+  if (courses.length === 0) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8 gap-4">
+        <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 48, opacity: 0.3 }}>folder_off</span>
+        <h2 className="text-xl font-semibold text-on-surface">No courses found</h2>
+        <p className="text-sm text-on-surface-variant text-center max-w-sm">No active courses were found for this term in Google Classroom.</p>
+        <button
+          onClick={checkGoogleConnection}
+          className="px-6 py-2 bg-primary text-on-primary rounded-full text-sm font-semibold transition hover:brightness-110"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26]">
-      <style>{`
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
-        * {
-          font-family: 'Inter', sans-serif;
-        }
-        .tab-active {
-          color: #f8f9fa;
-          border-bottom: 2px solid #5865f2;
-        }
-        .tab-inactive {
-          color: #949ba4;
-          transition: all 0.3s ease;
-        }
-        .tab-inactive:hover {
-          color: #dbdee1;
-        }
-        .message-enter {
-          animation: slideIn 0.3s ease-out;
-        }
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        .pulse-subtle {
-          animation: pulseSoft 2s ease-in-out infinite;
-        }
-        @keyframes pulseSoft {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        .discord-button {
-          background: #5865f2;
-        }
-        .discord-button:hover {
-          background: #4752c4;
-        }
-      `}</style>
-      {/* Header */}
-      <div className="border-b border-[#2c2f33] bg-[#2c2f33]/30 backdrop-blur-sm sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[#5865f2] flex items-center justify-center">
-                <span className="text-lg">✨</span>
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold text-[#f2f3f5]">SARS</h1>
-                <p className="text-xs text-[#949ba4]">AI Course Assistant</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <select
-                value={courseId}
-                onChange={(e) => setCourseId(e.target.value)}
-                className="bg-[#40444b] border border-[#36393f] rounded px-3 py-2 text-sm text-[#dbdee1] hover:bg-[#494d52] focus:outline-none focus:border-[#5865f2] transition"
-              >
-                {COURSES.map((course) => (
-                  <option key={course.id} value={course.id}>
-                    {course.name}
-                  </option>
-                ))}
-              </select>
-              <div className="text-right">
-                <p className="text-sm text-[#dbdee1]">{courseName}</p>
-                <p className="text-xs text-[#72767d]">Streaming enabled</p>
-              </div>
-            </div>
-          </div>
+    <div className={styles.app}>
 
-          {/* Tabs */}
-          <div className="flex gap-8 border-t border-[#2c2f33] pt-4">
-            {Object.values(TABS).map((tab) => (
+      {/* ── Course panel ── */}
+      <div className={styles.coursePanel}>
+        <div className={styles.coursePanelHeader}>Current Courses</div>
+        <div className={styles.courseList}>
+
+          {/* Current courses */}
+          {currentCourses.map((c, i) => (
+            <button
+              key={c.id || i}
+              onClick={() => setCourseId(c.id)}
+              className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
+            >
+              <div className={styles.courseItemText}>
+                <div className={styles.courseItemCode}>{c.name || "Untitled Course"}</div>
+                <div className={styles.courseItemName}>{c.section || ""}</div>
+              </div>
+            </button>
+          ))}
+
+          {/* Past courses toggle */}
+          {pastCourses.length > 0 && (
+            <>
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`pb-3 text-sm font-medium transition-all duration-300 capitalize ${
-                  activeTab === tab ? "tab-active" : "tab-inactive"
-                }`}
+                className={styles.pastCoursesToggle}
+                onClick={() => setPastOpen(o => !o)}
               >
-                {tab}
+                <span>Past Courses</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  {pastOpen ? "expand_less" : "expand_more"}
+                </span>
               </button>
-            ))}
+
+              {pastOpen && pastCourses.map((c, i) => (
+                <button
+                  key={c.id || i}
+                  onClick={() => setCourseId(c.id)}
+                  className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
+                >
+                  <div className={styles.courseItemText}>
+                    <div className={styles.courseItemCode}>{c.name || "Untitled Course"}</div>
+                    <div className={styles.courseItemName}>{c.section || ""}</div>
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
+
+        </div>
+      </div>
+
+      {/* ── Chat panel ── */}
+      <div className={styles.chatPanel}>
+        <div className={styles.chatHeader}>
+          <span
+            className={`material-symbols-outlined ${styles.chatHeaderIcon}`}
+            style={{ fontVariationSettings: '"FILL" 1' }}
+          >
+            smart_toy
+          </span>
+          <span className={styles.chatHeaderTitle}>SARS AI</span>
+        </div>
+
+        <div className={styles.messages}>
+          <div className={styles.messagesInner}>
+
+            {/* Empty state */}
+            {messages.length === 1 && messages[0].role === "assistant" && (
+              <div className={styles.emptyChat}>
+                <div className={styles.emptyChatAvatar}>
+                  <span className="material-symbols-outlined"
+                    style={{ fontSize: 32, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>
+                    smart_toy
+                  </span>
+                </div>
+                <h2 className={styles.emptyChatTitle}>SARS AI</h2>
+                <p className={styles.emptyChatSubtitle}>Ask anything about your {courseName} materials</p>
+              </div>
+            )}
+
+            {messages.map((msg, i) => {
+              if (messages.length === 1 && msg.role === "assistant") return null;
+              if (msg.role === "system") return (
+                <div key={i} className={styles.systemMessage}>
+                  <div className={styles.systemBubble}>{msg.content}</div>
+                </div>
+              );
+              if (msg.role === "user") return (
+                <div key={i} className={styles.userMessage}>
+                  <div className={styles.userBubble}>{msg.content}</div>
+                </div>
+              );
+              return (
+                <div key={i} className={styles.aiBubble}>
+                  <div className={styles.aiHeader}>
+                    <div className={styles.aiAvatar}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>smart_toy</span>
+                    </div>
+                    <span className={styles.aiLabel}>SARS AI</span>
+                  </div>
+                  <div className={styles.aiText}>
+                    {msg.content.split("\n\n").map((para, j) => <p key={j}>{para}</p>)}
+                  </div>
+                  {msg.citations?.length > 0 && (
+                    <div className={styles.citations}>
+                      {msg.citations.map((c, j) => (
+                        <CitationChip
+                          key={j}
+                          citation={c}
+                          indexedFiles={indexedFiles}
+                          onUpdateLabels={handleUpdateLabels}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {loading && streamingText && (
+              <div className={styles.aiBubble}>
+                <div className={styles.aiHeader}>
+                  <div className={styles.aiAvatar}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>smart_toy</span>
+                  </div>
+                  <span className={styles.aiLabel}>SARS AI</span>
+                </div>
+                <div className={styles.aiText}>
+                  {streamingText}
+                  <span className={styles.cursor}>|</span>
+                </div>
+              </div>
+            )}
+
+            {loading && !streamingText && (
+              <div className={styles.aiBubble}>
+                <div className={styles.aiHeader}>
+                  <div className={styles.aiAvatar}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>smart_toy</span>
+                  </div>
+                  <span className={styles.aiLabel}>SARS AI</span>
+                </div>
+                <div className={styles.thinkingDots}>
+                  {[0, 0.15, 0.3].map((d, i) => (
+                    <div key={i} className={styles.dot} style={{ animationDelay: `${d}s` }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div ref={bottomRef} style={{ height: "180px", flexShrink: 0 }} />
+          </div>
+        </div>
+
+        <div className={styles.inputArea}>
+          <div className={styles.inputInner}>
+            {error && <div className={styles.errorBanner}>{error}</div>}
+            {indexedFiles.filter(f => f.indexing_status === "indexed").length === 0 && (
+              <div className={styles.warningBanner}>
+                No files indexed yet — upload materials using the panel on the right.
+              </div>
+            )}
+            <div className={styles.inputBox}>
+              <textarea
+                ref={textareaRef}
+                className={styles.textarea}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                onInput={e => {
+                  e.target.style.height = "56px";
+                  e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+                }}
+                placeholder={`Ask about ${courseName}…`}
+                disabled={loading}
+              />
+              <div className={styles.inputFooter}>
+                <span className={styles.inputDisclaimer}>AI may provide inaccurate info.</span>
+                <button
+                  className={styles.sendBtn}
+                  onClick={handleSend}
+                  disabled={!input.trim() || loading}
+                >
+                  <span className={`material-symbols-outlined ${styles.sendIcon}`}>arrow_upward</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-hidden">
-        {activeTab === TABS.CHAT && (
-          <div className="h-full flex flex-col">
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="max-w-4xl mx-auto space-y-4">
-                {messages.map((msg, i) => (
-                  <div key={i} className="message-enter">
-                    {msg.role === "system" ? (
-                      <div className="inline-block bg-[#2c2f33] rounded-lg px-4 py-2 text-sm text-[#b5bac1] border border-[#40444b]">
-                        {msg.content}
-                      </div>
-                    ) : (
-                      <div
-                        className={`flex ${
-                          msg.role === "user" ? "justify-end" : "justify-start"
-                        }`}
-                      >
-                        <div
-                          className={`rounded-2xl px-5 py-3 max-w-2xl text-sm leading-relaxed ${
-                            msg.role === "user"
-                              ? "bg-[#5865f2] text-white rounded-br-none"
-                              : "bg-[#36393f] text-[#dbdee1] rounded-bl-none"
-                          }`}
-                        >
-                          <p className="whitespace-pre-wrap">{msg.content}</p>
+      {/* ── Files panel ── */}
+      <div className={styles.filesPanel}>
+        <div className={styles.filesPanelHeader}>
+          <div className={styles.filesPanelTop}>
+            <span className={styles.filesPanelTitle}>Project Files</span>
+            <button className={styles.addBtn} onClick={() => setUploadModalOpen(true)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 22 }}>add_circle</span>
+            </button>
+          </div>
+          <select
+            className={styles.filterSelect}
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+          >
+            <option value="all">All Files ({indexedFiles.length})</option>
+            <option value="not_in_notes">Not in Notes ({notInNotes.length})</option>
+          </select>
+        </div>
 
-                          {msg.citations && msg.citations.length > 0 && (
-                            <div className="mt-4 pt-3 border-t border-[#2c2f33] space-y-2">
-                              {msg.citations.map((c, idx) => (
-                                <div
-                                  key={idx}
-                                  className="text-xs opacity-80 flex gap-2"
-                                >
-                                  <span className="font-semibold min-w-fit text-[#5865f2]">
-                                    [{idx + 1}]
-                                  </span>
-                                  <span>
-                                    {c.source} — {c.section}, p.{c.page}{" "}
-                                    <span className="opacity-60">
-                                      ({c.element_type})
-                                    </span>
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+        <div className={styles.filesList}>
+          {displayFiles.length === 0 ? (
+            <div className={styles.emptyFiles}>
+              <span className={`material-symbols-outlined ${styles.emptyFilesIcon}`}>folder_open</span>
+              <div className={styles.emptyFilesText}>
+                {filter === "not_in_notes" ? "All files are in Notes" : "No files indexed yet"}
+              </div>
+              {filter === "all" && (
+                <button className={styles.emptyFilesBtn} onClick={() => setUploadModalOpen(true)}>
+                  Upload your first file
+                </button>
+              )}
+            </div>
+          ) : displayFiles.map(f => {
+            const { icon, color } = getFileIcon(f.filename);
+            const isProcessing    = f.indexing_status === "processing";
+            return (
+              <div key={f.file_id} className={styles.fileRow}>
+                <div className={styles.fileRowLeft}>
+                  <span className={`material-symbols-outlined ${styles.fileIcon}`} style={{ color }}>
+                    {icon}
+                  </span>
+                  <div className={styles.fileInfo}>
+                    <div className={styles.fileName}>{f.filename}</div>
+                    <div className={styles.fileStatus}>
+                      {f.indexing_status === "indexed" && (
+                        <>
+                          <span className={`${styles.statusDot} ${styles.statusDotReady}`} />
+                          <span className={`${styles.statusText} ${styles.statusTextReady}`}>Ready</span>
+                        </>
+                      )}
+                      {f.indexing_status === "processing" && (
+                        <>
+                          <span className={`${styles.statusDot} ${styles.statusDotIndexing}`} />
+                          <span className={`${styles.statusText} ${styles.statusTextIndexing}`}>Indexing</span>
+                        </>
+                      )}
+                      {f.indexing_status === "failed" && (
+                        <>
+                          <span className={`${styles.statusDot} ${styles.statusDotFailed}`} />
+                          <span className={`${styles.statusText} ${styles.statusTextFailed}`}>Retry</span>
+                        </>
+                      )}
+                    </div>
+                    {f.labels?.length > 0 && (
+                      <div className={styles.fileLabels}>
+                        {f.labels.slice(0, 2).map((label, i) => (
+                          <span
+                            key={i}
+                            className={styles.fileLabel}
+                            style={{ color: getLabelColor(label) }}
+                          >
+                            {label}
+                          </span>
+                        ))}
+                        {f.labels.length > 2 && (
+                          <span className={styles.fileLabel}>+{f.labels.length - 2}</span>
+                        )}
                       </div>
                     )}
                   </div>
-                ))}
-
-                {loading && streamingText && (
-                  <div className="flex justify-start message-enter">
-                    <div className="bg-[#36393f] text-[#dbdee1] rounded-2xl rounded-bl-none px-5 py-3 max-w-2xl text-sm leading-relaxed">
-                      <p className="whitespace-pre-wrap">{streamingText}</p>
-                      <span className="inline-block ml-1 pulse-subtle">▌</span>
-                    </div>
-                  </div>
-                )}
-
-                {loading && !streamingText && (
-                  <div className="flex justify-start">
-                    <div className="bg-[#36393f] rounded-2xl px-5 py-3">
-                      <div className="flex gap-2">
-                        <div className="w-2 h-2 bg-[#72767d] rounded-full pulse-subtle" />
-                        <div
-                          className="w-2 h-2 bg-[#72767d] rounded-full pulse-subtle"
-                          style={{ animationDelay: "0.2s" }}
-                        />
-                        <div
-                          className="w-2 h-2 bg-[#72767d] rounded-full pulse-subtle"
-                          style={{ animationDelay: "0.4s" }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div ref={bottomRef} />
-              </div>
-            </div>
-
-            {/* Input */}
-            <div className="border-t border-[#2c2f33] bg-[#2c2f33]/30 backdrop-blur-sm px-6 py-4">
-              {error && (
-                <div className="mb-3 bg-[#f04747]/15 border border-[#f04747]/30 rounded-lg px-4 py-2 text-sm text-[#f04747]">
-                  {error}
                 </div>
-              )}
-              <div className="max-w-4xl mx-auto flex gap-3">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) =>
-                    e.key === "Enter" && !e.shiftKey && handleSend()
-                  }
-                  placeholder="Ask about your course materials..."
-                  className="flex-1 bg-[#40444b] border border-[#36393f] rounded-full px-6 py-3 text-sm text-[#dbdee1] placeholder-[#72767d] focus:outline-none focus:ring-2 focus:ring-[#5865f2]/50 focus:border-transparent transition"
-                  disabled={loading}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || loading}
-                  className="discord-button disabled:opacity-40 disabled:cursor-not-allowed px-6 py-3 rounded-full text-sm font-medium text-white transition-all duration-200 transform hover:scale-105 active:scale-95"
-                >
-                  Send
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {activeTab === TABS.UPLOAD && (
-          <div className="h-full flex flex-col items-center justify-center px-6">
-            <div className="max-w-md w-full">
-              <div className="text-center mb-8">
-                <div className="w-16 h-16 rounded-full bg-[#5865f2] mx-auto mb-4 flex items-center justify-center">
-                  <span className="text-2xl">📄</span>
-                </div>
-                <h2 className="text-2xl font-semibold text-[#f2f3f5] mb-2">
-                  Upload Material
-                </h2>
-                <p className="text-[#949ba4]">
-                  Add PDFs to {courseName}
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <label className="block border-2 border-dashed border-[#40444b] rounded-2xl p-8 cursor-pointer hover:border-[#5865f2] hover:bg-[#5865f2]/5 transition group">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2 group-hover:scale-110 transition">
-                      📁
-                    </div>
-                    <p className="text-[#f2f3f5] font-medium mb-1">
-                      Choose a PDF file
-                    </p>
-                    <p className="text-sm text-[#949ba4]">
-                      or drag and drop
-                    </p>
-                  </div>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    className="hidden"
-                    onChange={(e) => setUploadFile(e.target.files[0])}
-                  />
-                </label>
-
-                {uploadFile && (
-                  <div className="bg-[#2c2f33] rounded-lg p-4 border border-[#40444b]">
-                    <p className="text-sm text-[#dbdee1]">
-                      📌 {uploadFile.name}
-                    </p>
-                  </div>
-                )}
-
-                <button
-                  onClick={handleRagUpload}
-                  disabled={!uploadFile || uploadLoading}
-                  className="w-full discord-button disabled:opacity-40 py-3 rounded-full text-sm font-medium text-white transition-all duration-200 transform hover:scale-105 active:scale-95"
-                >
-                  {uploadLoading ? "Indexing..." : "Index PDF"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === TABS.FILES && (
-          <div className="h-full overflow-y-auto px-6 py-6">
-            <div className="max-w-4xl mx-auto">
-              <h2 className="text-2xl font-semibold text-[#f2f3f5] mb-2">
-                Course Materials
-              </h2>
-              <p className="text-sm text-[#949ba4] mb-6">
-                {courseName}
-              </p>
-
-              {indexedFiles.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="text-4xl mb-3">📚</div>
-                  <p className="text-[#949ba4]">No files indexed yet</p>
-                  <p className="text-sm text-[#72767d] mt-2">
-                    Upload PDFs in the Upload tab to get started
-                  </p>
-                </div>
-              ) : (
-                <div className="grid gap-3">
-                  {indexedFiles.map((f, idx) => (
-                    <div
-                      key={f.filename}
-                      className="bg-[#2c2f33] border border-[#40444b] rounded-lg p-4 flex items-center justify-between hover:bg-[#36393f] hover:border-[#5865f2]/50 transition group message-enter"
-                      style={{ animationDelay: `${idx * 50}ms` }}
+                <div className={styles.fileActions}>
+                  {!isProcessing && !f.drive_file_id && (
+                    <button
+                      className={styles.fileActionBtn}
+                      onClick={() => handleSendToNotes(f.file_id)}
+                      title="Add to Notes"
                     >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <span className="text-xl">📄</span>
-                        <div className="min-w-0">
-                          <p className="text-[#f2f3f5] font-medium truncate">
-                            {f.filename}
-                          </p>
-                          <p className="text-xs text-[#949ba4]">
-                            {f.context_count || 0} chunks indexed
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteFile(f.filename, f.filename)}
-                        className="ml-4 px-4 py-2 rounded-lg text-[#f04747] hover:bg-[#f04747]/15 hover:text-[#f04747] transition text-sm font-medium"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))}
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>note_add</span>
+                    </button>
+                  )}
+                  {f.drive_file_id && (
+                    <span
+                      className={styles.fileActionBtn}
+                      style={{ color: "var(--color-primary)", opacity: 0.4, cursor: "default" }}
+                      title="Already in Notes"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
+                    </span>
+                  )}
+                  <button
+                    className={`${styles.fileActionBtn} ${styles.fileActionBtnDanger}`}
+                    onClick={() => handleDeleteFile(f.filename, f.file_id)}
+                    title={isProcessing ? "Cancel" : "Delete"}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                      {isProcessing ? "close" : "delete"}
+                    </span>
+                  </button>
                 </div>
-              )}
-            </div>
-          </div>
-        )}
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {uploadModalOpen && (
+        <UploadModal
+          courseId={courseId}
+          courseName={courseName}
+          onClose={() => setUploadModalOpen(false)}
+          onIndexed={() => fetchIndexedFiles()}
+        />
+      )}
     </div>
   );
 }
