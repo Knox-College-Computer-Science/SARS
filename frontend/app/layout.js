@@ -20,7 +20,7 @@ export default function RootLayout({ children }) {
       <body className="flex h-screen overflow-hidden bg-background text-on-surface font-sans">
         <PomodoroProvider>
           <Sidebar />
-          <main className="flex-1 min-h-0 flex flex-col overflow-hidden">{children}</main>
+          <main className="flex-1 h-screen overflow-y-auto">{children}</main>
         </PomodoroProvider>
       </body>
     </html>

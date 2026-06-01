@@ -3,22 +3,17 @@ import { useState, useEffect, useRef } from "react";
 import styles from "./page.module.css";
 import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 
-const aiCache = {
-  courses:     null,
-  isConnected: null,
-};
-
-const COURSE_ICONS = [
-  "memory", "account_tree", "bar_chart", "psychology",
-  "science", "calculate", "history_edu", "biotech",
-];
-
 const LABEL_COLORS = [
   "var(--color-primary)",
   "var(--color-secondary-container)",
   "var(--color-tertiary)",
   "var(--color-error)",
 ];
+
+const aiCache = {
+  courses:     null,
+  isConnected: null,
+};
 
 function getLabelColor(labelName) {
   let hash = 0;
@@ -164,15 +159,6 @@ function UploadModal({ courseId, courseName, onClose, onIndexed }) {
           throw new Error(text || "Upload failed");
         }
       }
-      const data = await res.json();
-      if (data.status === "error") {
-        setError(data.error || "Indexing failed");
-        return;
-      }
-      if (data.status === "duplicate") {
-        setError("This file is already indexed for this course.");
-        return;
-      }
       onIndexed();
     } catch (err) {
       setError(err.message);
@@ -192,6 +178,7 @@ function UploadModal({ courseId, courseName, onClose, onIndexed }) {
         body:        JSON.stringify({ note_id: noteId, course_id: courseId }),
       });
       if (!res.ok) throw new Error("Failed to start indexing");
+      // Refresh file list but don't close modal
       onIndexed();
     } catch (err) {
       setError(err.message);
@@ -280,13 +267,18 @@ function UploadModal({ courseId, courseName, onClose, onIndexed }) {
                       <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span>
                       Indexed
                     </span>
+                  ) : indexingId === note.note_id ? (
+                    <span className={styles.noteIndexedBadge}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>pending</span>
+                      Starting…
+                    </span>
                   ) : (
                     <button
                       className={styles.noteIndexBtn}
                       onClick={() => handleIndexFromNotes(note.note_id)}
-                      disabled={indexingId === note.note_id}
+                      disabled={indexingId !== null}
                     >
-                      {indexingId === note.note_id ? "Starting…" : "Index"}
+                      Index
                     </button>
                   )}
                 </div>
@@ -312,12 +304,16 @@ export default function AIPage() {
   const [indexedFiles,       setIndexedFiles      ] = useState([]);
   const [uploadModalOpen,    setUploadModalOpen   ] = useState(false);
   const [filter,             setFilter            ] = useState("all");
+  const [pastOpen,           setPastOpen          ] = useState(false);
   const bottomRef   = useRef(null);
   const textareaRef = useRef(null);
 
-  const storageKey = `sars_chat_history_${courseId}`;
-  const course     = courses.find(c => c.id === courseId);
-  const courseName = course?.name || courseId;
+  const storageKey   = `sars_chat_history_${courseId}`;
+  const course       = courses.find(c => c.id === courseId);
+  const courseName   = course?.name || courseId;
+
+  const currentCourses = courses.filter(c => c.is_active || c.is_current_term);
+  const pastCourses    = courses.filter(c => !c.is_active && !c.is_current_term);
 
   useEffect(() => { checkGoogleConnection(); }, []);
 
@@ -358,7 +354,7 @@ export default function AIPage() {
         credentials: "include",
         signal:      controller.signal,
       });
-      if (!res.ok) { setIsConnected(false); return; }
+      if (!res.ok) { setIsConnected(false); aiCache.isConnected = false; return; }
       const data      = await res.json();
       const connected = Boolean(data.user && data.has_access_token);
       setIsConnected(connected);
@@ -367,6 +363,7 @@ export default function AIPage() {
     } catch (err) {
       if (err.name !== "AbortError") console.error(err);
       setIsConnected(false);
+      aiCache.isConnected = false;
     } finally {
       clearTimeout(timeout);
       setCheckingConnection(false);
@@ -383,7 +380,7 @@ export default function AIPage() {
       aiCache.courses = fetched;
       setCourses(fetched);
       if (fetched.length > 0) setCourseId(fetched[0].id);
-      } catch (err) {
+    } catch (err) {
       console.error(err);
     }
   }
@@ -427,7 +424,12 @@ export default function AIPage() {
         headers:     { "Content-Type": "application/json" },
         body:        JSON.stringify({ file_id: fileId, course_id: courseId }),
       });
-      if (res.ok) fetchIndexedFiles();
+      if (res.ok) {
+        fetchIndexedFiles();
+      } else {
+        const err = await res.json();
+        setError(err.detail || "Failed to add to Notes");
+      }
     } catch (err) {
       console.error(err);
     }
@@ -595,30 +597,57 @@ export default function AIPage() {
   return (
     <div className={styles.app}>
 
+      {/* ── Course panel ── */}
       <div className={styles.coursePanel}>
         <div className={styles.coursePanelHeader}>Collections</div>
         <div className={styles.courseList}>
-          {courses.map((c, i) => (
+
+          {/* Current courses */}
+          {currentCourses.map((c, i) => (
             <button
               key={c.id || i}
               onClick={() => setCourseId(c.id)}
               className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
             >
-              <span
-                className={`material-symbols-outlined ${styles.courseItemIcon}`}
-                style={{ fontVariationSettings: c.school_course_id === courseId ? '"FILL" 1' : '"FILL" 0' }}
-              >
-                {COURSE_ICONS[i % COURSE_ICONS.length]}
-              </span>
               <div className={styles.courseItemText}>
-                <div className={styles.courseItemCode}>{c.section || c.course_code || c.name?.split(" ")[0]}</div>
-                <div className={styles.courseItemName}>{c.name}</div>
+                <div className={styles.courseItemCode}>{c.name}</div>
+                <div className={styles.courseItemName}>{c.section || ""}</div>
               </div>
             </button>
           ))}
+
+          {/* Past courses toggle */}
+          {pastCourses.length > 0 && (
+            <>
+              <button
+                className={styles.pastCoursesToggle}
+                onClick={() => setPastOpen(o => !o)}
+              >
+                <span>Past Courses</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  {pastOpen ? "expand_less" : "expand_more"}
+                </span>
+              </button>
+
+              {pastOpen && pastCourses.map((c, i) => (
+                <button
+                  key={c.id || i}
+                  onClick={() => setCourseId(c.id)}
+                  className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
+                >
+                  <div className={styles.courseItemText}>
+                    <div className={styles.courseItemCode}>{c.name}</div>
+                    <div className={styles.courseItemName}>{c.section || ""}</div>
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
+
         </div>
       </div>
 
+      {/* ── Chat panel ── */}
       <div className={styles.chatPanel}>
         <div className={styles.chatHeader}>
           <span
@@ -632,18 +661,21 @@ export default function AIPage() {
 
         <div className={styles.messages}>
           <div className={styles.messagesInner}>
+
+            {/* Empty state */}
             {messages.length === 1 && messages[0].role === "assistant" && (
-                <div className={styles.emptyChat}>
-                  <div className={styles.emptyChatAvatar}>
-                    <span className="material-symbols-outlined"
-                          style={{ fontSize: 32, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>
-                          smart_toy
-                    </span>
-                  </div>
-                  <h2 className={styles.emptyChatTitle}>SARS AI</h2>
-                  <p className={styles.emptyChatSubtitle}>Ask anything about your {courseName} materials</p>
+              <div className={styles.emptyChat}>
+                <div className={styles.emptyChatAvatar}>
+                  <span className="material-symbols-outlined"
+                    style={{ fontSize: 32, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>
+                    smart_toy
+                  </span>
                 </div>
+                <h2 className={styles.emptyChatTitle}>SARS AI</h2>
+                <p className={styles.emptyChatSubtitle}>Ask anything about your {courseName} materials</p>
+              </div>
             )}
+
             {messages.map((msg, i) => {
               if (messages.length === 1 && msg.role === "assistant") return null;
               if (msg.role === "system") return (
@@ -714,7 +746,7 @@ export default function AIPage() {
               </div>
             )}
 
-            <div ref={bottomRef} />
+            <div ref={bottomRef} style={{ height: "180px", flexShrink: 0 }} />
           </div>
         </div>
 
@@ -760,6 +792,7 @@ export default function AIPage() {
         </div>
       </div>
 
+      {/* ── Files panel ── */}
       <div className={styles.filesPanel}>
         <div className={styles.filesPanelHeader}>
           <div className={styles.filesPanelTop}>
@@ -818,7 +851,7 @@ export default function AIPage() {
                       {f.indexing_status === "failed" && (
                         <>
                           <span className={`${styles.statusDot} ${styles.statusDotFailed}`} />
-                          <span className={`${styles.statusText} ${styles.statusTextFailed}`}>Failed</span>
+                          <span className={`${styles.statusText} ${styles.statusTextFailed}`}>Retry</span>
                         </>
                       )}
                     </div>
@@ -881,7 +914,7 @@ export default function AIPage() {
           courseId={courseId}
           courseName={courseName}
           onClose={() => setUploadModalOpen(false)}
-          onIndexed={() => { fetchIndexedFiles(); setUploadModalOpen(false); }}
+          onIndexed={() => fetchIndexedFiles()}
         />
       )}
     </div>
