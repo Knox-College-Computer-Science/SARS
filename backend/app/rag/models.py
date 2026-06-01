@@ -184,7 +184,7 @@ class RAGFile(Base):
     __tablename__ = "rag_files"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    course_id = Column(String, ForeignKey("courses.id"), nullable=False, index=True)
+    course_id = Column(String, nullable=False, index=True)  # stores school_course_id (Google Classroom ID)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     filename = Column(String(255), nullable=False)
     source_type = Column(String(50), nullable=False, default="uploaded")
@@ -198,8 +198,6 @@ class RAGFile(Base):
     quality_assessment = _jsonb_column(nullable=True)
     warnings = _array_column()
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    course = relationship("Course")
     user = relationship("User")
     retrieval_chunks = relationship("RetrievalChunk", back_populates="file", cascade="all, delete-orphan")
     parent_chunks = relationship("ParentChunk", back_populates="file", cascade="all, delete-orphan")
@@ -225,7 +223,7 @@ class ParentChunk(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     parent_id = Column(String(100), unique=True, nullable=False, index=True)
-    course_id = Column(String, ForeignKey("courses.id"), nullable=False, index=True)
+    course_id = Column(String, nullable=False, index=True)  # stores school_course_id
     file_id = Column(String, ForeignKey("rag_files.id", ondelete="CASCADE"), nullable=False)
     section_heading = Column(String(500), nullable=True)
     page_number = Column(Integer, nullable=True)
@@ -259,7 +257,7 @@ class RetrievalChunk(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     chunk_id = Column(String(100), unique=True, nullable=False, index=True)
-    course_id = Column(String, ForeignKey("courses.id"), nullable=False, index=True)
+    course_id = Column(String, nullable=False, index=True)  # stores school_course_id
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     file_id = Column(String, ForeignKey("rag_files.id", ondelete="CASCADE"), nullable=False)
     parent_id = Column(String, ForeignKey("parent_chunks.parent_id", ondelete="CASCADE"), nullable=False)
