@@ -26,9 +26,52 @@ def _get_or_create_rag_file(
     local_path: Optional[str],
     file_size: int,
 ) -> Optional[RAGFile]:
-    existing = db.query(RAGFile).filter(RAGFile.md5_hash == md5_hash).first()
-    if existing:
+    same_course_existing = (
+        db.query(RAGFile)
+        .filter(
+            RAGFile.md5_hash == md5_hash,
+            RAGFile.course_id == course_id,
+            RAGFile.indexing_status != "deleted",
+            RAGFile.id != file_id,
+        )
+        .first()
+    )
+    if same_course_existing:
+        changed = False
+        if drive_file_id and not same_course_existing.drive_file_id:
+            same_course_existing.drive_file_id = drive_file_id
+            changed = True
+        if local_path and not same_course_existing.local_path:
+            same_course_existing.local_path = local_path
+            changed = True
+        if changed:
+            db.commit()
+
+        placeholder = db.query(RAGFile).filter(RAGFile.id == file_id).first()
+        if placeholder:
+            placeholder.indexing_status = "deleted"
+            db.commit()
         return None
+
+    hash_conflict = (
+        db.query(RAGFile)
+        .filter(RAGFile.md5_hash == md5_hash, RAGFile.id != file_id)
+        .first()
+    )
+    stored_md5_hash = None if hash_conflict else md5_hash
+
+    existing_file = db.query(RAGFile).filter(RAGFile.id == file_id).first()
+    if existing_file:
+        existing_file.course_id = course_id
+        existing_file.user_id = user_id
+        existing_file.filename = filename
+        existing_file.drive_file_id = drive_file_id
+        existing_file.local_path = local_path
+        existing_file.md5_hash = stored_md5_hash
+        existing_file.file_size = file_size
+        existing_file.indexing_status = "processing"
+        db.commit()
+        return existing_file
 
     rag_file = RAGFile(
         id              = file_id,
@@ -38,7 +81,7 @@ def _get_or_create_rag_file(
         source_type     = "uploaded",
         drive_file_id   = drive_file_id,
         local_path      = local_path,
-        md5_hash        = md5_hash,
+        md5_hash        = stored_md5_hash,
         file_size       = file_size,
         indexing_status = "processing",
     )

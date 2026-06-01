@@ -160,6 +160,7 @@ function UploadModal({ courseId, courseName, onClose, onIndexed }) {
         }
       }
       onIndexed();
+      onClose();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -178,8 +179,8 @@ function UploadModal({ courseId, courseName, onClose, onIndexed }) {
         body:        JSON.stringify({ note_id: noteId, course_id: courseId }),
       });
       if (!res.ok) throw new Error("Failed to start indexing");
-      // Refresh file list but don't close modal
       onIndexed();
+      onClose();
     } catch (err) {
       setError(err.message);
       setIndexingId(null);
@@ -254,7 +255,7 @@ function UploadModal({ courseId, courseName, onClose, onIndexed }) {
               ) : notesFiles.length === 0 ? (
                 <div className={styles.emptyNotes}>
                   <span className={`material-symbols-outlined ${styles.emptyNotesIcon}`}>folder_off</span>
-                  <div className={styles.emptyNotesText}>No notes found for this course</div>
+                  <div className={styles.emptyNotesText}>No unindexed notes found for this course</div>
                 </div>
               ) : notesFiles.map(note => (
                 <div key={note.note_id} className={styles.noteRow}>
@@ -312,8 +313,8 @@ export default function AIPage() {
   const course       = courses.find(c => c.id === courseId);
   const courseName   = course?.name || courseId;
 
-  const currentCourses = courses.filter(c => c.is_active || c.is_current_term);
-  const pastCourses    = courses.filter(c => !c.is_active && !c.is_current_term);
+  const currentCourses = courses.filter(c => c.is_current_term !== false);
+  const pastCourses    = courses.filter(c => c.is_current_term === false);
 
   useEffect(() => { checkGoogleConnection(); }, []);
 
@@ -372,11 +373,16 @@ export default function AIPage() {
 
   async function fetchCourses() {
     try {
-      const res     = await fetch("/api/classroom/courses", { credentials: "include" });
+      const res     = await fetch("/api/classroom/courses/upload-options", {
+        credentials: "include",
+        cache:       "no-store",
+      });
       if (res.status === 401) { setIsConnected(false); return; }
       if (!res.ok) throw new Error("Failed to fetch courses");
       const data    = await res.json();
-      const fetched = data.courses || [];
+      const current = (data.current_courses || []).map(c => ({ ...c, is_current_term: true }));
+      const past    = (data.past_courses || []).map(c => ({ ...c, is_current_term: false }));
+      const fetched = [...current, ...past];
       aiCache.courses = fetched;
       setCourses(fetched);
       if (fetched.length > 0) setCourseId(fetched[0].id);
@@ -426,6 +432,7 @@ export default function AIPage() {
       });
       if (res.ok) {
         fetchIndexedFiles();
+        setMessages(prev => [...prev, { role: "system", content: "Added file to Notes." }]);
       } else {
         const err = await res.json();
         setError(err.detail || "Failed to add to Notes");
@@ -599,7 +606,7 @@ export default function AIPage() {
 
       {/* ── Course panel ── */}
       <div className={styles.coursePanel}>
-        <div className={styles.coursePanelHeader}>Collections</div>
+        <div className={styles.coursePanelHeader}>Current Courses</div>
         <div className={styles.courseList}>
 
           {/* Current courses */}
@@ -610,7 +617,7 @@ export default function AIPage() {
               className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
             >
               <div className={styles.courseItemText}>
-                <div className={styles.courseItemCode}>{c.name}</div>
+                <div className={styles.courseItemCode}>{c.name || "Untitled Course"}</div>
                 <div className={styles.courseItemName}>{c.section || ""}</div>
               </div>
             </button>
@@ -636,7 +643,7 @@ export default function AIPage() {
                   className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
                 >
                   <div className={styles.courseItemText}>
-                    <div className={styles.courseItemCode}>{c.name}</div>
+                    <div className={styles.courseItemCode}>{c.name || "Untitled Course"}</div>
                     <div className={styles.courseItemName}>{c.section || ""}</div>
                   </div>
                 </button>
