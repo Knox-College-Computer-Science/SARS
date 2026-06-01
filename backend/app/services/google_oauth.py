@@ -275,34 +275,117 @@ def get_all_assignments_for_courses(access_token: str, courses: list) -> list:
             response_data = get_course_coursework(access_token, course_id)
             assignments = response_data.get("courseWork", [])
 
-            for assignment in assignments:
-                due_info = format_due_datetime(
-                    assignment.get("dueDate"),
-                    assignment.get("dueTime"),
-                )
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else None
 
-                all_assignments.append(
-                    {
-                        "courseId": course_id,
-                        "courseName": course_name,
-                        "id": assignment.get("id"),
-                        "title": assignment.get("title"),
-                        "description": assignment.get("description"),
-                        "workType": assignment.get("workType"),
-                        "state": assignment.get("state"),
-                        "creationTime": assignment.get("creationTime"),
-                        "updateTime": assignment.get("updateTime"),
-                        "dueDate": due_info["dueDate"],
-                        "dueTime": due_info["dueTime"],
-                        "alternateLink": assignment.get("alternateLink"),
-                    }
+            if status_code == 401:
+                raise
+
+            if status_code == 403:
+                print(
+                    f"Skipping course {course_name} ({course_id}) because coursework is forbidden. "
+                    "This may be a teaching/TA course."
                 )
+                continue
+
+            print(f"Failed for course {course_name} ({course_id}): {e}")
+            continue
+
         except Exception as e:
             print(f"Failed for course {course_name} ({course_id}): {e}")
             continue
 
+        submissions_by_coursework_id = {}
+
+        try:
+            submissions_by_coursework_id = get_course_student_submissions(
+                access_token,
+                course_id,
+            )
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else None
+
+            if status_code == 401:
+                raise
+
+            if status_code == 403:
+                print(
+                    f"Could not fetch submissions for {course_name} ({course_id}). "
+                    "This may be a teaching/TA course or permission issue."
+                )
+            else:
+                print(f"Failed to fetch submissions for {course_name} ({course_id}): {e}")
+
+        except Exception as e:
+            print(f"Failed to fetch submissions for {course_name} ({course_id}): {e}")
+
+        for assignment in assignments:
+            due_info = format_due_datetime(
+                assignment.get("dueDate"),
+                assignment.get("dueTime"),
+            )
+
+            submission = submissions_by_coursework_id.get(assignment.get("id"))
+
+            submission_state = submission.get("state") if submission else None
+            submitted = submission_state in ["TURNED_IN", "RETURNED"]
+
+            all_assignments.append(
+                {
+                    "courseId": course_id,
+                    "courseName": course_name,
+                    "id": assignment.get("id"),
+                    "title": assignment.get("title"),
+                    "description": assignment.get("description"),
+                    "workType": assignment.get("workType"),
+                    "state": assignment.get("state"),
+                    "submissionState": submission_state,
+                    "submitted": submitted,
+                    "creationTime": assignment.get("creationTime"),
+                    "updateTime": assignment.get("updateTime"),
+                    "dueDate": due_info["dueDate"],
+                    "dueTime": due_info["dueTime"],
+                    "alternateLink": assignment.get("alternateLink"),
+                }
+            )
+
     return all_assignments
 
+def get_course_student_submissions(access_token: str, course_id: str) -> dict:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    submissions_by_coursework_id = {}
+    page_token = None
+
+    while True:
+        params = {
+            "userId": "me",
+            "pageSize": 100,
+        }
+
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(
+            f"https://classroom.googleapis.com/v1/courses/{course_id}/courseWork/-/studentSubmissions",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        for submission in data.get("studentSubmissions", []):
+            coursework_id = submission.get("courseWorkId")
+            if coursework_id:
+                submissions_by_coursework_id[coursework_id] = submission
+
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return submissions_by_coursework_id
 
 def get_course_materials(access_token: str, course_id: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -315,12 +398,57 @@ def get_course_materials(access_token: str, course_id: str) -> dict:
     return response.json()
 
 
+def get_course_label(course: dict) -> str:
+    course_name = course.get("name") or "Untitled Course"
+    course_section = course.get("section")
+
+    if course_section:
+        return f"{course_name} - {course_section}"
+
+    return course_name
+
+
+def add_google_material_to_lists(material: dict, pdfs: list, slides: list, links: list, seen_urls: set):
+    drive_file_wrapper = material.get("driveFile", {})
+    drive_file = drive_file_wrapper.get("driveFile", {}) if drive_file_wrapper else {}
+    link = material.get("link", {})
+
+    if drive_file:
+        mime = drive_file.get("mimeType", "")
+        title = drive_file.get("title", "Untitled")
+        url = drive_file.get("alternateLink", "")
+
+        if url and url in seen_urls:
+            return
+
+        if url:
+            seen_urls.add(url)
+
+        if "pdf" in mime.lower():
+            pdfs.append({"title": title, "url": url, "type": "pdf"})
+        elif "presentation" in mime.lower():
+            slides.append({"title": title, "url": url, "type": "slides"})
+        else:
+            links.append({"title": title, "url": url, "type": "drive"})
+
+    if link:
+        url = link.get("url", "")
+        title = link.get("title", url)
+
+        if url and url in seen_urls:
+            return
+
+        if url:
+            seen_urls.add(url)
+
+        links.append({"title": title, "url": url, "type": "link"})
+
 def get_all_materials_for_courses(access_token: str, courses: list) -> list:
     all_courses_materials = []
 
     for course in courses:
         course_id = course.get("id")
-        course_name = course.get("name")
+        course_name = get_course_label(course)
 
         if not course_id:
             continue
@@ -328,36 +456,43 @@ def get_all_materials_for_courses(access_token: str, courses: list) -> list:
         pdfs = []
         slides = []
         links = []
+        seen_urls = set()
 
+        # 1. Pull from Google Classroom "Classwork / Materials" section
         try:
             response_data = get_course_materials(access_token, course_id)
             materials_list = response_data.get("courseWorkMaterial", [])
 
             for material_item in materials_list:
                 for mat in material_item.get("materials", []):
-                    drive_file_wrapper = mat.get("driveFile", {})
-                    drive_file = drive_file_wrapper.get("driveFile", {}) if drive_file_wrapper else {}
-                    link = mat.get("link", {})
-
-                    if drive_file:
-                        mime = drive_file.get("mimeType", "")
-                        title = drive_file.get("title", "Untitled")
-                        url = drive_file.get("alternateLink", "")
-
-                        if "pdf" in mime.lower():
-                            pdfs.append({"title": title, "url": url, "type": "pdf"})
-                        elif "presentation" in mime.lower():
-                            slides.append({"title": title, "url": url, "type": "slides"})
-                        else:
-                            links.append({"title": title, "url": url, "type": "drive"})
-
-                    if link:
-                        url = link.get("url", "")
-                        title = link.get("title", url)
-                        links.append({"title": title, "url": url, "type": "link"})
+                    add_google_material_to_lists(
+                        mat,
+                        pdfs,
+                        slides,
+                        links,
+                        seen_urls,
+                    )
 
         except Exception as e:
-            print(f"Failed to fetch materials for course {course_name} ({course_id}): {e}")
+            print(f"Failed to fetch classwork materials for course {course_name} ({course_id}): {e}")
+
+        # 2. Pull attachments from the main announcement stream
+        try:
+            announcements_data = get_course_announcements(access_token, course_id)
+            announcements = announcements_data.get("announcements", [])
+
+            for announcement in announcements:
+                for mat in announcement.get("materials", []):
+                    add_google_material_to_lists(
+                        mat,
+                        pdfs,
+                        slides,
+                        links,
+                        seen_urls,
+                    )
+
+        except Exception as e:
+            print(f"Failed to fetch announcement materials for course {course_name} ({course_id}): {e}")
 
         all_courses_materials.append({
             "courseId": course_id,
