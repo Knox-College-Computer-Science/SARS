@@ -162,8 +162,41 @@ def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedEle
         raise
 
 
+def _extract_pdf_pypdf2(file_bytes: bytes) -> List[ExtractedElement]:
+    import io
+    import PyPDF2
+
+    reader   = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+    elements = []
+    current_heading = ""
+
+    for page_num, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        if not text.strip():
+            continue
+        paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 20]
+        if not paragraphs:
+            paragraphs = [text.strip()]
+        for para in paragraphs:
+            elements.append(ExtractedElement(
+                element_type    = "text",
+                text            = para,
+                page_number     = page_num,
+                section_heading = current_heading,
+            ))
+
+    return elements
+
+
 def _extract_plain_text(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
     ext = Path(filename).suffix.lower()
+
+    if ext == ".pdf":
+        try:
+            return _extract_pdf_pypdf2(file_bytes)
+        except Exception as e:
+            logger.warning(f"PyPDF2 extraction failed: {e}, storing raw text")
+
     if ext in (".txt", ".md"):
         text       = file_bytes.decode("utf-8", errors="replace")
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
@@ -171,6 +204,7 @@ def _extract_plain_text(file_bytes: bytes, filename: str) -> List[ExtractedEleme
             ExtractedElement(element_type="text", text=p, page_number=i + 1)
             for i, p in enumerate(paragraphs)
         ]
+
     return [ExtractedElement(
         element_type = "text",
         text         = file_bytes.decode("utf-8", errors="replace"),

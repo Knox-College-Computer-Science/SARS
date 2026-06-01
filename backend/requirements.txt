@@ -5,6 +5,7 @@ python-dotenv
 google-auth-oauthlib
 google-api-python-client
 google-auth
+google-genai
 requests
 beautifulsoup4
 itsdangerous
@@ -14,6 +15,7 @@ python-socketio>=5.11.0
 python-multipart>=0.0.9
 aiohttp>=3.9.0
 # RAG pipeline
+google-genai
 chromadb
 rank-bm25
 unstructured[pdf]

@@ -71,19 +71,10 @@ def _embed_ollama(texts: List[str]) -> List[List[float]]:
 
 
 def _embed_google(texts: List[str]) -> List[List[float]]:
-    import time
     from google import genai
-    client  = genai.Client(api_key=GOOGLE_API_KEY)
-    results = []
-    for i, text in enumerate(texts):
-        response = client.models.embed_content(
-            model=GOOGLE_EMBEDDING_MODEL,
-            contents=text,
-        )
-        results.append(response.embeddings[0].values)
-        if i < len(texts) - 1:
-            time.sleep(0.5)
-    return results
+    client   = genai.Client(api_key=GOOGLE_API_KEY)
+    response = client.models.embed_content(model=GOOGLE_EMBEDDING_MODEL, contents=texts)
+    return [e.values for e in response.embeddings]
 
 
 def _embed_huggingface(texts: List[str]) -> List[List[float]]:

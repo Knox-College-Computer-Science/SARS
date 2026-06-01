@@ -18,7 +18,7 @@ PARSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 EMBEDDING_PROVIDER  = os.getenv("EMBEDDING_PROVIDER", "google")
 EMBEDDING_MODEL     = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
-EMBEDDING_DIMENSION = 768
+EMBEDDING_DIMENSION = 768  # nomic-embed-text output dim
 EMBEDDING_BATCH_SIZE = 100
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
