@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ConnectGoogleClassroomCard from "./components/ConnectGoogleClassroomCard";
+import PomodoroTimer from "./components/PomodoroTimer";
 
 function fetchOpts(extra = {}) {
   return { credentials: "include", ...extra };
@@ -9,14 +10,44 @@ function fetchOpts(extra = {}) {
 
 function getDueDate(a) {
   if (!a.dueDate) return null;
+
   const { year, month, day } = a.dueDate;
-  return new Date(year, month - 1, day, a.dueTime?.hours ?? 23, a.dueTime?.minutes ?? 59);
+
+  if (a.dueTime) {
+    return new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+        a.dueTime.hours ?? 0,
+        a.dueTime.minutes ?? 0,
+        a.dueTime.seconds ?? 0
+      )
+    );
+  }
+
+  return new Date(year, month - 1, day, 23, 59);
 }
 function getDaysLeft(d) {
   const today = new Date(); today.setHours(0,0,0,0);
   const due   = new Date(d); due.setHours(0,0,0,0);
   return Math.ceil((due.getTime() - today.getTime()) / 86_400_000);
 }
+
+function getDueLabel(daysLeft) {
+  if (daysLeft === null) return "";
+
+  if (daysLeft <= 0) {
+    return "Due Today";
+  }
+
+  if (daysLeft === 1) {
+    return "Due Tomorrow";
+  }
+
+  return `${daysLeft}d left`;
+}
+
 function getAnnouncementDate(a) { return new Date(a.updateTime ?? a.creationTime); }
 function isWithinPastDays(date, days) {
   const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
@@ -39,11 +70,11 @@ function Skeleton({ className = "" }) {
   return <div className={`animate-pulse rounded-lg bg-surface-container-highest ${className}`} />;
 }
 
-// ── Module-level cache — survives navigation, clears on full page refresh ──
 const cache = {
-  assignments:   null,
+  assignments: null,
   announcements: null,
-  todos:         null,
+  todos: null,
+  userName: null,
 };
 
 export default function Home() {
@@ -52,6 +83,7 @@ export default function Home() {
   const [assignments,          setAssignments         ] = useState(cache.assignments   ?? []);
   const [announcements,        setAnnouncements       ] = useState(cache.announcements ?? []);
   const [todos,                setTodos               ] = useState(cache.todos         ?? []);
+  const [userName, setUserName] = useState(cache.userName ?? "");
   const [loadingAssignments,   setLoadingAssignments  ] = useState(cache.assignments   === null);
   const [loadingAnnouncements, setLoadingAnnouncements] = useState(cache.announcements === null);
   const [loadingTodos,         setLoadingTodos        ] = useState(cache.todos         === null);
@@ -70,17 +102,29 @@ export default function Home() {
     try {
       const res = await fetch("/api/auth/google/me", fetchOpts());
       if (res.ok) {
+        const data = await res.json();
+
+        const fullName = data.user?.name || "";
+        const firstName = fullName.split(" ")[0];
+
+        cache.userName = firstName;
+        setUserName(firstName);
+
         setIsConnected(true);
+
         // Only fetch data if not already cached
         if (cache.assignments   === null) fetchAssignments();
         if (cache.announcements === null) fetchAnnouncements();
         if (cache.todos         === null) fetchTodos();
         return;
-      } else {
+      } 
+      else {
         // Auth failed — clear all cached data too
         cache.assignments   = null;
         cache.announcements = null;
         cache.todos         = null;
+        cache.userName      = null;
+        setUserName("");
         setIsConnected(false);
         return;
       }
@@ -100,7 +144,22 @@ export default function Home() {
       if (!res.ok) throw new Error("Failed to fetch assignments");
       const data = await res.json();
       const dueSoon = (data.assignments || [])
-        .filter((a) => { const d = getDueDate(a); return d && getDaysLeft(d) >= 0 && getDaysLeft(d) <= 7; })
+        .filter((a) => {
+          const d = getDueDate(a);
+          const daysLeft = d ? getDaysLeft(d) : null;
+
+          const alreadySubmitted =
+            a.submitted === true ||
+            a.submissionState === "TURNED_IN" ||
+            a.submissionState === "RETURNED";
+
+          return (
+            d &&
+            !alreadySubmitted &&
+            daysLeft >= 0 &&
+            daysLeft <= 7
+          );
+        })
         .sort((a, b) => (getDueDate(a)?.getTime() ?? 0) - (getDueDate(b)?.getTime() ?? 0));
       cache.assignments = dueSoon;
       setAssignments(dueSoon);
@@ -234,7 +293,9 @@ export default function Home() {
           <div className="relative rounded-xl bg-surface-container border border-outline-variant p-6 min-h-[148px] flex flex-col justify-center overflow-hidden">
             <div className="pointer-events-none absolute inset-0 opacity-[0.03]"
               style={{ backgroundImage: "radial-gradient(circle, #b4c5ff 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
-            <h2 className="font-display text-4xl font-bold text-on-surface tracking-tight">{greeting}</h2>
+            <h2 className="font-display text-4xl font-bold text-on-surface tracking-tight">
+              {greeting}{userName ? `, ${userName}` : ""}
+            </h2>
             {loadingAssignments ? (
               <Skeleton className="mt-2 h-5 w-72" />
             ) : (
@@ -253,7 +314,14 @@ export default function Home() {
                   <span className="material-symbols-outlined text-error" style={{ fontSize: 20 }}>assignment_late</span>
                   Due This Week
                 </h3>
-                <button className="text-xs text-primary hover:underline">View All</button>
+                <a
+                  href="https://classroom.google.com/a/not-turned-in/all"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline"
+                >
+                  View All
+                </a>
               </div>
               {loadingAssignments ? (
                 <div className="space-y-3">
@@ -281,7 +349,7 @@ export default function Home() {
                             {isUrgent ? "Urgent" : "Standard"}
                           </span>
                           <span className={`text-xs font-bold ${isUrgent ? "text-error" : "text-on-surface-variant"}`}>
-                            {daysLeft === 0 ? "Due today" : daysLeft !== null ? `${daysLeft}d left` : ""}
+                            {getDueLabel(daysLeft)}
                           </span>
                         </div>
                         <h4 className="text-sm font-bold text-on-surface">{assignment.title}</h4>
@@ -354,76 +422,80 @@ export default function Home() {
         </div>
 
         <div className="col-span-3">
-          <div className="sticky top-6 flex flex-col gap-3 bg-surface-container-low border border-outline-variant rounded-xl p-4 max-h-[calc(100vh-48px)]">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-base font-semibold flex items-center gap-2">
-                <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>checklist</span>
-                Quick To-Do
-              </h3>
-              <span className="text-xs text-on-surface-variant">
-                {todos.filter((t) => t.done).length}/{todos.length} done
-              </span>
-            </div>
+          <div className="sticky top-6 flex flex-col gap-4 max-h-[calc(100vh-48px)] overflow-y-auto">
+            <PomodoroTimer />
 
-            <div className="flex-1 overflow-y-auto space-y-1 pr-0.5">
-              {loadingTodos ? (
-                <>
-                  <Skeleton className="h-10 rounded-lg" />
-                  <Skeleton className="h-10 rounded-lg" />
-                  <Skeleton className="h-10 rounded-lg" />
-                </>
-              ) : todos.length === 0 ? (
-                <p className="text-xs text-on-surface-variant text-center py-6">No tasks yet — add one below!</p>
-              ) : (
-                todos.map((todo) => (
-                  <div key={todo.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-surface-container group transition-colors">
-                    <div
-                      onClick={() => toggleTodo(todo.id, todo.done)}
-                      className={`mt-0.5 w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center cursor-pointer transition-colors ${
-                        todo.done ? "bg-primary border-primary" : "border-outline-variant group-hover:border-primary"
-                      }`}
-                    >
-                      {todo.done && <span className="material-symbols-outlined text-on-primary" style={{ fontSize: 14 }}>check</span>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium transition-all ${todo.done ? "line-through opacity-40" : "text-on-surface"}`}>
-                        {todo.text}
-                      </p>
-                      <span className={`text-xs text-on-surface-variant ${todo.done ? "opacity-40" : ""}`}>{todo.category}</span>
-                    </div>
-                    <button
-                      onClick={() => deleteTodo(todo.id)}
-                      className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error transition-all flex-shrink-0 mt-0.5"
-                      aria-label="Delete task"
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
+            <div className="flex flex-col gap-3 bg-surface-container-low border border-outline-variant rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-semibold flex items-center gap-2">
+                  <span className="material-symbols-outlined text-secondary" style={{ fontSize: 20 }}>checklist</span>
+                  Quick To-Do
+                </h3>
+                <span className="text-xs text-on-surface-variant">
+                  {todos.filter((t) => t.done).length}/{todos.length} done
+                </span>
+              </div>
 
-            <div className="border-t border-outline-variant pt-3 space-y-2">
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full bg-surface-container-high border border-outline-variant rounded-lg px-3 py-1.5 text-xs text-on-surface-variant outline-none focus:border-primary transition-colors"
-              >
-                <option>Personal</option>
-                <option>Academic</option>
-                <option>Coursework</option>
-                <option>Study</option>
-              </select>
-              <div className="flex items-center gap-2 bg-surface-container-high rounded-lg px-3 py-2">
-                <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 18 }}>add</span>
-                <input
-                  ref={inputRef}
-                  value={newTask}
-                  onChange={(e) => setNewTask(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addTodo()}
-                  placeholder="Add new task…"
-                  className="flex-1 bg-transparent border-none outline-none text-sm text-on-surface placeholder:text-on-surface-variant"
-                />
+              <div className="flex-1 overflow-y-auto space-y-1 pr-0.5">
+                {loadingTodos ? (
+                  <>
+                    <Skeleton className="h-10 rounded-lg" />
+                    <Skeleton className="h-10 rounded-lg" />
+                    <Skeleton className="h-10 rounded-lg" />
+                  </>
+                ) : todos.length === 0 ? (
+                  <p className="text-xs text-on-surface-variant text-center py-6">No tasks yet — add one below!</p>
+                ) : (
+                  todos.map((todo) => (
+                    <div key={todo.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-surface-container group transition-colors">
+                      <div
+                        onClick={() => toggleTodo(todo.id, todo.done)}
+                        className={`mt-0.5 w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center cursor-pointer transition-colors ${
+                          todo.done ? "bg-primary border-primary" : "border-outline-variant group-hover:border-primary"
+                        }`}
+                      >
+                        {todo.done && <span className="material-symbols-outlined text-on-primary" style={{ fontSize: 14 }}>check</span>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium transition-all ${todo.done ? "line-through opacity-40" : "text-on-surface"}`}>
+                          {todo.text}
+                        </p>
+                        <span className={`text-xs text-on-surface-variant ${todo.done ? "opacity-40" : ""}`}>{todo.category}</span>
+                      </div>
+                      <button
+                        onClick={() => deleteTodo(todo.id)}
+                        className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error transition-all flex-shrink-0 mt-0.5"
+                        aria-label="Delete task"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="border-t border-outline-variant pt-3 space-y-2">
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full bg-surface-container-high border border-outline-variant rounded-lg px-3 py-1.5 text-xs text-on-surface-variant outline-none focus:border-primary transition-colors"
+                >
+                  <option>Personal</option>
+                  <option>Academic</option>
+                  <option>Coursework</option>
+                  <option>Study</option>
+                </select>
+                <div className="flex items-center gap-2 bg-surface-container-high rounded-lg px-3 py-2">
+                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 18 }}>add</span>
+                  <input
+                    ref={inputRef}
+                    value={newTask}
+                    onChange={(e) => setNewTask(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addTodo()}
+                    placeholder="Add new task…"
+                    className="flex-1 bg-transparent border-none outline-none text-sm text-on-surface placeholder:text-on-surface-variant"
+                  />
+                </div>
               </div>
             </div>
           </div>
