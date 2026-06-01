@@ -22,8 +22,6 @@ from app.rag.config import (
 logger = logging.getLogger(__name__)
 
 
-### CIRCUIT BREAKER ###
-
 class CircuitBreaker:
     def __init__(self, threshold: int, reset_timeout: int):
         self.threshold     = threshold
@@ -61,34 +59,37 @@ _breaker = CircuitBreaker(
 )
 
 
-### PROVIDERS ###
-
 def _embed_ollama(texts: List[str]) -> List[List[float]]:
-    url = f"{OLLAMA_URL}/api/embed"
+    url  = f"{OLLAMA_URL}/api/embed"
     resp = requests.post(
         url,
         json={"model": EMBEDDING_MODEL, "input": texts},
         timeout=60,
     )
     resp.raise_for_status()
-    data = resp.json()
-    return data.get("embeddings", [])
+    return resp.json().get("embeddings", [])
 
 
 def _embed_google(texts: List[str]) -> List[List[float]]:
-    import google.generativeai as genai
-    genai.configure(api_key=GOOGLE_API_KEY)
-    result = genai.embed_content(
-        model   = GOOGLE_EMBEDDING_MODEL,
-        content = texts,
-    )
-    return result["embedding"] if isinstance(texts, str) else result["embeddings"]
+    import time
+    from google import genai
+    client  = genai.Client(api_key=GOOGLE_API_KEY)
+    results = []
+    for i, text in enumerate(texts):
+        response = client.models.embed_content(
+            model=GOOGLE_EMBEDDING_MODEL,
+            contents=text,
+        )
+        results.append(response.embeddings[0].values)
+        if i < len(texts) - 1:
+            time.sleep(0.5)
+    return results
 
 
 def _embed_huggingface(texts: List[str]) -> List[List[float]]:
-    url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HUGGINGFACE_MODEL}"
+    url     = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{HUGGINGFACE_MODEL}"
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
-    resp = requests.post(url, headers=headers, json={"inputs": texts}, timeout=60)
+    resp    = requests.post(url, headers=headers, json={"inputs": texts}, timeout=60)
     resp.raise_for_status()
     return resp.json()
 
@@ -104,15 +105,13 @@ def _call_provider(texts: List[str]) -> List[List[float]]:
         raise ValueError(f"Unknown embedding provider: {EMBEDDING_PROVIDER}")
 
 
-### RETRY ###
-
 def _embed_with_retry(texts: List[str], retries: int = 3) -> List[List[float]]:
     if CIRCUIT_BREAKER_ENABLED and _breaker.is_open:
         raise RuntimeError(
             "Embedding service unavailable (circuit breaker open). Try again shortly."
         )
 
-    delay = 1.0
+    delay      = 1.0
     last_error = None
 
     for attempt in range(retries):
@@ -131,8 +130,6 @@ def _embed_with_retry(texts: List[str], retries: int = 3) -> List[List[float]]:
     raise RuntimeError(f"Embedding failed after {retries} attempts: {last_error}")
 
 
-### PUBLIC API ###
-
 def embed_texts(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
@@ -140,7 +137,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
     all_embeddings: List[List[float]] = []
 
     for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-        batch = texts[i : i + EMBEDDING_BATCH_SIZE]
+        batch = texts[i: i + EMBEDDING_BATCH_SIZE]
         logger.info(
             f"Embedding batch {i // EMBEDDING_BATCH_SIZE + 1} "
             f"({len(batch)} texts) via {EMBEDDING_PROVIDER}"

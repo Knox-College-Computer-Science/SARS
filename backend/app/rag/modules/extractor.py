@@ -4,8 +4,6 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-import google.generativeai as genai
-
 from app.rag.config import (
     GOOGLE_API_KEY,
     IMAGE_CAPTION_ENABLED,
@@ -19,11 +17,6 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
 
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-
-
-### CACHE ###
 
 def _cache_path(md5: str) -> Path:
     return PARSE_CACHE_DIR / f"{md5}.json"
@@ -48,13 +41,14 @@ def _save_cache(md5: str, elements: List[dict]) -> None:
         logger.warning(f"Cache write failed: {e}")
 
 
-### IMAGE CAPTIONING ###
-
 def _caption_image(image_bytes: bytes, context: str = "") -> str:
     if not GOOGLE_API_KEY or not image_bytes:
         return "[Image: caption unavailable]"
     try:
-        model = genai.GenerativeModel(IMAGE_CAPTION_MODEL)
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=GOOGLE_API_KEY)
         prompt = (
             "Describe this image precisely for academic retrieval. "
             "List all visible text exactly as written. "
@@ -62,17 +56,18 @@ def _caption_image(image_bytes: bytes, context: str = "") -> str:
             "State the type of figure (diagram, chart, table, equation, photo). "
             f"Context from surrounding text: {context[:300] if context else 'none'}."
         )
-        response = model.generate_content([
-            {"mime_type": "image/png", "data": image_bytes},
-            prompt,
-        ])
+        response = client.models.generate_content(
+            model=IMAGE_CAPTION_MODEL,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                prompt,
+            ],
+        )
         return response.text.strip()
     except Exception as e:
         logger.warning(f"Image captioning failed: {e}")
         return "[Image: caption failed]"
 
-
-### DOCLING EXTRACTION ###
 
 def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
     try:
@@ -83,7 +78,7 @@ def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedEle
 
         pipeline_opts = PdfPipelineOptions(
             do_table_structure=True,
-            do_ocr=True,
+            do_ocr=False,
         )
 
         converter = DocumentConverter(
@@ -108,8 +103,8 @@ def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedEle
 
         for item, _ in result.document.iterate_items():
             label = getattr(item, "label", "text")
-            text = getattr(item, "text", "").strip()
-            page = (
+            text  = getattr(item, "text", "").strip()
+            page  = (
                 getattr(getattr(item, "prov", [None])[0], "page", 0)
                 if getattr(item, "prov", None)
                 else 0
@@ -140,7 +135,7 @@ def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedEle
             elif label == "picture":
                 if IMAGE_CAPTION_ENABLED:
                     img_bytes = getattr(item, "image_bytes", b"")
-                    caption = _caption_image(img_bytes, current_heading)
+                    caption   = _caption_image(img_bytes, current_heading)
                     elements.append(ExtractedElement(
                         element_type    = "image",
                         text            = caption,
@@ -170,7 +165,7 @@ def _extract_with_docling(file_bytes: bytes, filename: str) -> List[ExtractedEle
 def _extract_plain_text(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
     ext = Path(filename).suffix.lower()
     if ext in (".txt", ".md"):
-        text = file_bytes.decode("utf-8", errors="replace")
+        text       = file_bytes.decode("utf-8", errors="replace")
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         return [
             ExtractedElement(element_type="text", text=p, page_number=i + 1)
@@ -182,8 +177,6 @@ def _extract_plain_text(file_bytes: bytes, filename: str) -> List[ExtractedEleme
         page_number  = 1,
     )]
 
-
-### PUBLIC API ###
 
 def extract(file_bytes: bytes, filename: str) -> List[ExtractedElement]:
     ext = Path(filename).suffix.lower()

@@ -9,6 +9,7 @@ const uploadCache = {
 export default function UploadBox() {
   const [file,           setFile          ] = useState(null);
   const [subject,        setSubject       ] = useState("");
+  const [selectedCourse, setSelectedCourse] = useState(null);
   const [noteType,       setNoteType      ] = useState("Lecture Notes");
   const [loading,        setLoading       ] = useState(false);
   const [progress,       setProgress      ] = useState(0);
@@ -68,6 +69,7 @@ export default function UploadBox() {
   }
 
   function handleCourseSelect(course) {
+    setSelectedCourse(course);
     setSubject(course.name);
     setDropdownOpen(false);
     setOpenGroup(null);
@@ -108,6 +110,7 @@ export default function UploadBox() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("subject", subject);
+    formData.append("course_id", selectedCourse?.id || selectedCourse?.school_course_id || "");
 
     try {
       const res = await fetch("/api/upload", {
@@ -118,7 +121,15 @@ export default function UploadBox() {
       const data = await res.json();
       clearInterval(interval);
       setProgress(100);
-      if (!res.ok) { alert(data.detail || "Upload failed"); return; }
+      if (!res.ok) {
+        const msg = typeof data.detail === "string"
+          ? data.detail
+          : Array.isArray(data.detail)
+            ? data.detail.map(e => e.msg).join(", ")
+            : "Upload failed";
+        alert(msg);
+        return;
+      }
       setLastResult(data);
       removeFile();
       setSubject("");
@@ -307,7 +318,7 @@ export default function UploadBox() {
         </div>
 
         {/* Upload button */}
-        <button onClick={handleUpload} disabled={loading || !file || !subject}
+        <button onClick={handleUpload} disabled={loading || !file || !subject || !selectedCourse}
           className="w-full py-3 bg-primary text-on-primary text-base font-bold rounded-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ boxShadow: "0 4px 24px rgba(180,197,255,0.15)" }}
         >

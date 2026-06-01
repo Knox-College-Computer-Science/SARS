@@ -2,8 +2,6 @@ import logging
 import re
 from typing import List
 
-import google.generativeai as genai
-
 from app.rag.config import (
     GOOGLE_API_KEY,
     LLM_MODEL,
@@ -13,11 +11,6 @@ from app.rag.config import (
 
 logger = logging.getLogger(__name__)
 
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-
-
-### INTENT DETECTION ###
 
 _TABLE_KEYWORDS = {
     "table", "row", "column", "value", "rate", "percentage",
@@ -43,7 +36,6 @@ _SYLLABUS_KEYWORDS = {
 
 def detect_intent(query: str) -> str:
     q = query.lower()
-
     if any(kw in q for kw in _SYLLABUS_KEYWORDS):
         return "syllabus"
     if any(kw in q for kw in _TABLE_KEYWORDS):
@@ -54,8 +46,6 @@ def detect_intent(query: str) -> str:
         return "conceptual"
     return "factual"
 
-
-### QUERY EXPANSION ###
 
 _EXPANSION_PROMPT = """You are a query expansion assistant for a university course RAG system.
 
@@ -77,13 +67,17 @@ def expand_query(query: str) -> List[str]:
         return _fallback_expansion(query)
 
     try:
-        model    = genai.GenerativeModel(LLM_MODEL)
+        from google import genai
+        client   = genai.Client(api_key=GOOGLE_API_KEY)
         prompt   = _EXPANSION_PROMPT.format(
             n=QUERY_VARIANTS_COUNT - 1,
             query=query,
         )
-        response = model.generate_content(prompt)
-        lines    = [
+        response = client.models.generate_content(
+            model=LLM_MODEL,
+            contents=prompt,
+        )
+        lines = [
             line.strip()
             for line in response.text.strip().splitlines()
             if line.strip() and line.strip() != query
@@ -98,7 +92,7 @@ def expand_query(query: str) -> List[str]:
 
 
 def _fallback_expansion(query: str) -> List[str]:
-    words    = query.lower().split()
-    keywords = [w for w in words if len(w) > 3]
+    words           = query.lower().split()
+    keywords        = [w for w in words if len(w) > 3]
     keyword_variant = " ".join(keywords) if keywords else query
     return [keyword_variant] if keyword_variant != query else []

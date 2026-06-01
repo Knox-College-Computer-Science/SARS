@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from datetime import datetime
@@ -6,16 +7,30 @@ import uuid
 
 from sqlalchemy import (
     Column, String, Integer, Float, Text,
-    DateTime, Boolean, ForeignKey, Index
+    DateTime, Boolean, ForeignKey, Index, JSON
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
-from pgvector.sqlalchemy import Vector
+from database import Base
 
-Base = declarative_base()
+def _array_column(item_type=String, **kwargs):
+    if os.getenv("DATABASE_URL", "").startswith("postgresql"):
+        from sqlalchemy.dialects.postgresql import ARRAY
+        return Column(ARRAY(item_type), default=list, **kwargs)
+    return Column(JSON, default=list, **kwargs)
+
+def _vector_column(dimensions=768, **kwargs):
+    if os.getenv("DATABASE_URL", "").startswith("postgresql"):
+        from pgvector.sqlalchemy import Vector
+        return Column(Vector(dimensions), nullable=True, **kwargs)
+    return Column(JSON, nullable=True, **kwargs)
+
+def _jsonb_column(**kwargs):
+    if os.getenv("DATABASE_URL", "").startswith("postgresql"):
+        from sqlalchemy.dialects.postgresql import JSONB
+        return Column(JSONB, **kwargs)
+    return Column(JSON, **kwargs)
 
 def generate_uuid():
     return str(uuid.uuid4())
@@ -25,11 +40,11 @@ def generate_uuid():
 @dataclass
 class ExtractedElement:
     element_type: str          # "text" | "title" | "table" | "image"
-    text: str                  # Raw text content (or LLaVA caption for images)
+    text: str                  # Raw text content
     page_number: int = 0
     section_heading: str = ""  # Most recent Title seen before this element
     formatted_content: str = ""  # For tables: markdown version
-    image_bytes: bytes = b""     # For images: raw bytes for LLaVA
+    image_bytes: bytes = b""     # For images
 
 
 ### CHUNK DATACLASSES ###
@@ -173,15 +188,15 @@ class RAGFile(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     filename = Column(String(255), nullable=False)
     source_type = Column(String(50), nullable=False, default="uploaded")
-    labels = Column(ARRAY(String), default=[])
+    labels = _array_column()
     drive_file_id = Column(String(255), nullable=True)
     local_path = Column(String(500), nullable=True)
     md5_hash = Column(String(32), nullable=True, unique=True)
     file_size = Column(Integer, nullable=True)
     indexing_status = Column(String(50), default="pending")
     indexed_at = Column(DateTime, nullable=True)
-    quality_assessment = Column(JSONB, nullable=True)
-    warnings = Column(ARRAY(String), default=[])
+    quality_assessment = _jsonb_column(nullable=True)
+    warnings = _array_column()
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     course = relationship("Course")
@@ -218,7 +233,7 @@ class ParentChunk(Base):
     page_range_end = Column(Integer, nullable=True)
     source_filename = Column(String(255), nullable=False)
     text = Column(Text, nullable=False)
-    child_chunk_ids = Column(ARRAY(String), default=[])
+    child_chunk_ids = _array_column()
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     file = relationship("RAGFile", back_populates="parent_chunks")
@@ -255,7 +270,7 @@ class RetrievalChunk(Base):
     source_filename = Column(String(255), nullable=False)
     text = Column(Text, nullable=False)
     formatted_content = Column(Text, nullable=True)
-    embedding = Column(Vector(768), nullable=True)
+    embedding = _vector_column(768)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     file = relationship("RAGFile", back_populates="retrieval_chunks")
@@ -287,13 +302,13 @@ class RAGRetrievalLog(Base):
     course_id = Column(String, ForeignKey("courses.id"), nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     query = Column(Text, nullable=False)
-    query_variants = Column(ARRAY(String), default=[])
+    query_variants = _array_column()
     retrieval_latency_ms = Column(Float, nullable=True)
     num_results = Column(Integer, default=0)
     confidence_level = Column(String(50), nullable=True)
     hit_at_5 = Column(Boolean, default=False)
-    retrieved_chunk_ids = Column(ARRAY(String), default=[])
-    rerank_scores = Column(ARRAY(Float), default=[])
+    retrieved_chunk_ids = _array_column()
+    rerank_scores = _array_column()
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
@@ -320,8 +335,8 @@ class UserAcademicProfile(Base):
     user_id = Column(String, ForeignKey("users.id"), primary_key=True)
     declared_major = Column(String(255), nullable=True)
     declared_minor = Column(String(255), nullable=True)
-    courses_taken = Column(ARRAY(String), default=[])
-    interests = Column(ARRAY(String), default=[])
+    courses_taken = _array_column()
+    interests = _array_column()
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
 

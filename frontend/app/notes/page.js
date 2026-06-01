@@ -76,10 +76,15 @@ async function fetchNotes() {
   try {
     const res  = await fetch("/api/notes", { credentials: "include" });
     const data = await res.json();
-    notesCache.notes = data;
-    setNotes(data);
-  } catch (err) { console.error(err); }
-  finally { setLoadingNotes(false); }
+    const notes = Array.isArray(data) ? data : [];
+    notesCache.notes = notes;
+    setNotes(notes);
+  } catch (err) {
+    console.error(err);
+    setNotes([]);
+  } finally {
+    setLoadingNotes(false);
+  }
 }
 
 async function fetchClassroomMaterials() {
