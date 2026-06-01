@@ -13,7 +13,7 @@ export default function UploadBox() {
   const [loading,        setLoading       ] = useState(false);
   const [progress,       setProgress      ] = useState(0);
   const [lastResult,     setLastResult    ] = useState(null);
-  const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === null);
+  const [loadingCourses, setLoadingCourses] = useState(uploadCache.currentCourses === null);
   const [previewUrl,     setPreviewUrl    ] = useState(null);
   const [dragActive,     setDragActive    ] = useState(false);
   const [currentCourses, setCurrentCourses] = useState([]);
@@ -25,7 +25,6 @@ export default function UploadBox() {
 
   useEffect(() => { fetchCourses(); }, []);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -68,7 +67,7 @@ export default function UploadBox() {
   }
 
   function handleCourseSelect(course) {
-    setSubject(course.name);
+    setSubject(getCourseLabel(course));
     setDropdownOpen(false);
     setOpenGroup(null);
   }

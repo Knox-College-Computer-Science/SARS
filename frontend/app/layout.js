@@ -1,4 +1,5 @@
 import Sidebar from "./components/Sidebar";
+import { PomodoroProvider } from "./components/PomodoroProvider";
 import "./globals.css";
 
 export default function RootLayout({ children }) {
@@ -17,8 +18,10 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body className="flex h-screen overflow-hidden bg-background text-on-surface font-sans">
-        <Sidebar />
-        <main className="flex-1 h-screen overflow-y-auto">{children}</main>
+        <PomodoroProvider>
+          <Sidebar />
+          <main className="flex-1 h-screen overflow-y-auto">{children}</main>
+        </PomodoroProvider>
       </body>
     </html>
   );
