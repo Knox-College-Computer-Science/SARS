@@ -27,6 +27,7 @@ export default function ForumPage() {
   const [loading,          setLoading]          = useState(true);
   const [error,            setError]            = useState(null);
   const [isGoogleConnected, setIsGoogleConnected] = useState(true);
+  const [noCourses, setNoCourses] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -52,18 +53,6 @@ export default function ForumPage() {
           setLoading(false);
           return;
         }
-
-        if (!googleConnected) {
-          setIsConnected(false);
-          return;
-        }
-
-        setIsConnected(true);
-
-        const syncData = await syncClassroomCourses();
-        t = syncData.token;
-        user = syncData.user;
-        allCourses = syncData.courses ?? [];
 
         setCurrentUser(user);
         setToken(t);
@@ -201,22 +190,6 @@ export default function ForumPage() {
       <div className={styles.splash}>
         <div className={styles.splashLogo}>Discussion</div>
         <div className={styles.splashSub}>Connecting…</div>
-      </div>
-    );
-  }
-
-  if (!isConnected) {
-    return (
-      <div className="p-6 text-white">
-        <h1 className="text-3xl font-bold text-center mb-10">
-          💬 Discussion
-        </h1>
-
-        <div className="min-h-[60vh] flex items-center justify-center">
-          <ConnectGoogleClassroomCard
-            message="Connect Google Classroom to access course-based discussion channels for your current classes."
-          />
-        </div>
       </div>
     );
   }
