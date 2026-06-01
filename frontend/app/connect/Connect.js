@@ -123,7 +123,7 @@ export default function Connect() {
           {/* Feature list */}
           <div className="space-y-3 mb-8">
             {[
-              "Automatic calendar syncing for deadlines",
+              "View upcoming assignments and deadlines",
               "Import lecture materials to your AI Assistant",
             ].map((feature) => (
               <div key={feature} className="flex items-center gap-3 text-on-surface-variant">

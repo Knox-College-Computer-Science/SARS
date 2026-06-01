@@ -45,9 +45,6 @@ export default function UploadPage() {
           <h1 className="font-display text-4xl font-bold text-on-surface tracking-tight">
             Upload Notes
           </h1>
-          <p className="text-sm text-on-surface-variant mt-2">
-            Connect Google Classroom to get started
-          </p>
         </div>
         <ConnectGoogleClassroomCard message="Connect Google Classroom before uploading notes so your notes can be linked to your current classes." />
       </div>
