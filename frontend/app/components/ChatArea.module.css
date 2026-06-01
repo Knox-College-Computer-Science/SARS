@@ -1,15 +1,13 @@
-@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&display=swap');
-
 .container {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #1e1f23;
+  background: var(--color-surface);
 }
 
-/* ── Header ───────────────────────────────────────────────── */
+/* ── Header ───────────────────────────────────────────────────── */
 
 .header {
   display: flex;
@@ -18,7 +16,7 @@
   gap: 16px;
   min-height: 62px;
   padding: 0 32px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid var(--color-outline-variant);
   flex-shrink: 0;
 }
 
@@ -29,25 +27,25 @@
 }
 
 .hash {
-  font-family: 'Crimson Pro', Georgia, serif;
-  font-size: 1.15rem;
+  font-family: Inter, sans-serif;
+  font-size: 1.1rem;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--color-outline);
   line-height: 1;
 }
 
 .channelName {
-  font-family: 'Crimson Pro', Georgia, serif;
-  font-size: 1.22rem;
-  font-weight: 600;
+  font-family: "Hanken Grotesk", sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
   letter-spacing: -0.01em;
-  color: #f0f0f3;
+  color: var(--color-on-surface);
 }
 
 .memberCount {
   font-size: 0.75rem;
   letter-spacing: 0.04em;
-  color: rgba(232, 233, 236, 0.35);
+  color: var(--color-outline);
 }
 
 .livePill {
@@ -80,13 +78,13 @@
 }
 
 .feed::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-outline-variant);
   border-radius: 2px;
 }
 
 .emptyHint {
   margin: auto;
-  color: rgba(232, 233, 236, 0.28);
+  color: var(--color-outline);
   font-size: 0.9rem;
   font-style: italic;
   letter-spacing: 0.01em;
@@ -104,7 +102,7 @@
 .dateLine {
   flex: 1;
   height: 1px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--color-outline-variant);
 }
 
 .dateLabel {
@@ -112,7 +110,7 @@
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(232, 233, 236, 0.32);
+  color: var(--color-outline);
   white-space: nowrap;
 }
 
@@ -123,7 +121,7 @@
   align-items: center;
   gap: 4px;
   padding: 8px 0 4px;
-  color: rgba(232, 233, 236, 0.42);
+  color: var(--color-outline);
   font-size: 0.8rem;
   font-style: italic;
 }
@@ -132,7 +130,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: rgba(232, 233, 236, 0.38);
+  background: var(--color-outline);
   animation: bounce 1.3s ease-in-out infinite;
 }
 
@@ -155,7 +153,7 @@
   align-items: flex-end;
   gap: 10px;
   padding: 14px 32px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid var(--color-outline-variant);
   flex-shrink: 0;
 }
 
@@ -164,12 +162,12 @@
   min-height: 44px;
   max-height: 150px;
   padding: 11px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-  background: rgba(12, 12, 15, 0.65);
-  color: #e8e9ec;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: 8px;
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
   font-size: 0.9rem;
-  font-family: inherit;
+  font-family: Inter, sans-serif;
   line-height: 1.58;
   resize: none;
   outline: none;
@@ -177,21 +175,21 @@
 }
 
 .inputBox:focus {
-  border-color: rgba(255, 255, 255, 0.22);
+  border-color: var(--color-primary);
 }
 
 .inputBox::placeholder {
-  color: rgba(232, 233, 236, 0.26);
+  color: var(--color-outline);
   font-style: italic;
 }
 
 .sendBtn {
   width: 44px;
   height: 44px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(232, 233, 236, 0.65);
+  border-radius: 8px;
+  border: 1px solid var(--color-outline-variant);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface-variant);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -200,9 +198,9 @@
 }
 
 .sendBtn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #e8e9ec;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .sendBtn:disabled {
@@ -213,10 +211,10 @@
 .attachBtn {
   width: 38px;
   height: 44px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  border: 1px solid var(--color-outline-variant);
   background: transparent;
-  color: rgba(232, 233, 236, 0.45);
+  color: var(--color-outline);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -225,8 +223,8 @@
 }
 
 .attachBtn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(232, 233, 236, 0.85);
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
 }
 
 .attachBtn:disabled {
@@ -238,8 +236,8 @@
   display: block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(232, 233, 236, 0.2);
-  border-top-color: rgba(232, 233, 236, 0.7);
+  border: 2px solid var(--color-outline-variant);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -252,10 +250,10 @@
 
 .announcementBanner {
   padding: 12px 32px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid var(--color-outline-variant);
   font-size: 0.8rem;
   font-style: italic;
-  color: rgba(232, 233, 236, 0.4);
+  color: var(--color-outline);
   text-align: center;
   flex-shrink: 0;
   letter-spacing: 0.01em;

@@ -1,13 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&display=swap');
-
 .sidebar {
   width: 268px;
   min-width: 268px;
   display: flex;
   flex-direction: column;
-  background: #1a1b1e;
-  border-right: 1px solid rgba(255, 255, 255, 0.07);
-  color: #e8e9ec;
+  background: var(--color-surface-container-low);
+  border-right: 1px solid var(--color-outline-variant);
+  color: var(--color-on-surface);
   overflow: hidden;
 }
 
@@ -15,27 +13,27 @@
 
 .header {
   padding: 20px 20px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid var(--color-outline-variant);
   flex-shrink: 0;
 }
 
 .courseName {
-  font-family: 'Crimson Pro', Georgia, 'Times New Roman', serif;
-  font-size: 1.22rem;
-  font-weight: 600;
+  font-family: "Hanken Grotesk", sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
   letter-spacing: -0.01em;
-  color: #f0f0f3;
+  color: var(--color-on-surface);
   line-height: 1.3;
 }
 
 .courseSelect {
   width: 100%;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-  color: #f0f0f3;
-  font-family: 'Crimson Pro', Georgia, serif;
-  font-size: 1.1rem;
+  background: var(--color-surface-container);
+  border: 1px solid var(--color-outline-variant);
+  border-radius: 6px;
+  color: var(--color-on-surface);
+  font-family: "Hanken Grotesk", sans-serif;
+  font-size: 1rem;
   font-weight: 600;
   padding: 6px 10px;
   cursor: pointer;
@@ -47,13 +45,13 @@
 }
 
 .courseSelect:hover {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--color-surface-container-high);
 }
 
 .courseSelect option {
-  background: #252629;
-  color: #f0f0f3;
-  font-family: system-ui, sans-serif;
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
+  font-family: Inter, sans-serif;
   font-size: 0.95rem;
 }
 
@@ -63,7 +61,7 @@
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(232, 233, 236, 0.36);
+  color: var(--color-outline);
 }
 
 .selfRow {
@@ -72,13 +70,13 @@
   gap: 9px;
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.065);
+  border-top: 1px solid var(--color-outline-variant);
 }
 
 .selfAvatar {
   width: 26px;
   height: 26px;
-  border-radius: 3px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
   font-size: 0.65rem;
@@ -91,7 +89,7 @@
   flex: 1;
   font-size: 0.83rem;
   font-weight: 500;
-  color: rgba(232, 233, 236, 0.75);
+  color: var(--color-on-surface-variant);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -111,14 +109,14 @@
   display: inline-block;
   margin-left: 7px;
   padding: 1px 6px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: var(--color-surface-container-high);
+  border: 1px solid var(--color-outline-variant);
   font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(232, 233, 236, 0.45);
+  color: var(--color-outline);
   vertical-align: middle;
 }
 
@@ -128,7 +126,7 @@
   gap: 6px;
   margin: 2px 10px 8px;
   padding: 6px 10px;
-  border-radius: 3px;
+  border-radius: 6px;
   border: 1px solid rgba(255, 193, 7, 0.18);
   background: rgba(255, 193, 7, 0.06);
   color: rgba(255, 193, 7, 0.65);
@@ -168,9 +166,9 @@
   bottom: calc(100% + 6px);
   right: 0;
   min-width: 130px;
-  background: #252629;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  background: var(--color-surface-container-high);
+  border: 1px solid var(--color-outline-variant);
+  border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   z-index: 200;
   overflow: hidden;
@@ -187,9 +185,9 @@
   gap: 9px;
   padding: 7px 10px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 6px;
   background: transparent;
-  color: rgba(232, 233, 236, 0.65);
+  color: var(--color-on-surface-variant);
   font-size: 0.82rem;
   font-weight: 500;
   text-align: left;
@@ -198,13 +196,13 @@
 }
 
 .statusOption:hover {
-  background: rgba(255, 255, 255, 0.07);
-  color: #e8e9ec;
+  background: var(--color-surface-container-highest);
+  color: var(--color-on-surface);
 }
 
 .statusOptionActive {
-  color: #e8e9ec;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-on-surface);
+  background: var(--color-surface-container-highest);
 }
 
 .statusOptionDot {
@@ -231,7 +229,7 @@
 }
 
 .nav::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-outline-variant);
   border-radius: 2px;
 }
 
@@ -248,7 +246,7 @@
   font-weight: 700;
   letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: rgba(232, 233, 236, 0.35);
+  color: var(--color-outline);
 }
 
 .addBtn {
@@ -256,16 +254,16 @@
   place-items: center;
   width: 20px;
   height: 20px;
-  border-radius: 3px;
+  border-radius: 4px;
   border: 0;
   background: transparent;
-  color: rgba(232, 233, 236, 0.35);
+  color: var(--color-outline);
   cursor: pointer;
   transition: color 150ms;
 }
 
 .addBtn:hover {
-  color: rgba(232, 233, 236, 0.82);
+  color: var(--color-on-surface);
 }
 
 .list {
@@ -285,17 +283,17 @@
   padding: 7px 10px;
   border: 0;
   border-left: 2px solid transparent;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 6px 6px 0;
   background: transparent;
-  color: rgba(232, 233, 236, 0.58);
+  color: var(--color-on-surface-variant);
   text-align: left;
   cursor: pointer;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
 
 .channelBtn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(232, 233, 236, 0.88);
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
 }
 
 /* ── DM buttons ───────────────────────────────────────────── */
@@ -308,32 +306,32 @@
   padding: 6px 10px;
   border: 0;
   border-left: 2px solid transparent;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 6px 6px 0;
   background: transparent;
-  color: rgba(232, 233, 236, 0.58);
+  color: var(--color-on-surface-variant);
   text-align: left;
   cursor: pointer;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
 
 .dmBtn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(232, 233, 236, 0.88);
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
 }
 
 .active {
-  background: rgba(255, 255, 255, 0.09) !important;
-  color: #f0f0f3 !important;
-  border-left-color: rgba(255, 255, 255, 0.48) !important;
+  background: rgba(180, 197, 255, 0.1) !important;
+  color: var(--color-primary) !important;
+  border-left-color: var(--color-primary) !important;
 }
 
 /* ── Elements ─────────────────────────────────────────────── */
 
 .hash {
-  font-family: 'Crimson Pro', Georgia, serif;
-  font-size: 1.05rem;
+  font-family: Inter, sans-serif;
+  font-size: 1rem;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--color-outline);
   flex-shrink: 0;
   width: 14px;
   text-align: center;
@@ -353,9 +351,9 @@
 .badge {
   min-width: 18px;
   padding: 1px 5px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #e8e9ec;
+  border-radius: 4px;
+  background: var(--color-surface-container-highest);
+  color: var(--color-on-surface);
   font-size: 0.66rem;
   font-weight: 700;
   text-align: center;
@@ -366,7 +364,7 @@
 .avatar {
   width: 28px;
   height: 28px;
-  border-radius: 3px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
   font-size: 0.7rem;
@@ -385,7 +383,7 @@
 
 .preview {
   font-size: 0.71rem;
-  color: rgba(232, 233, 236, 0.36);
+  color: var(--color-outline);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -394,6 +392,6 @@
 .emptyHint {
   padding: 8px 10px;
   font-size: 0.78rem;
-  color: rgba(232, 233, 236, 0.26);
+  color: var(--color-outline);
   font-style: italic;
 }
