@@ -14,7 +14,7 @@ export default function UploadBox() {
   const [loading,        setLoading       ] = useState(false);
   const [progress,       setProgress      ] = useState(0);
   const [lastResult,     setLastResult    ] = useState(null);
-  const [loadingCourses, setLoadingCourses] = useState(uploadCache.courses === null);
+  const [loadingCourses, setLoadingCourses] = useState(uploadCache.currentCourses === null);
   const [previewUrl,     setPreviewUrl    ] = useState(null);
   const [dragActive,     setDragActive    ] = useState(false);
   const [currentCourses, setCurrentCourses] = useState([]);
@@ -47,9 +47,15 @@ export default function UploadBox() {
     }
     setLoadingCourses(true);
     try {
-      const res = await fetch("/api/classroom/courses/upload-options", { credentials: "include" });
+      const res = await fetch("/api/classroom/courses/upload-options", {
+        credentials: "include",
+        cache:       "no-store",
+      });
       if (res.status === 401) { setCurrentCourses([]); setPastCourses([]); return; }
-      if (!res.ok) throw new Error("Failed to fetch course upload options");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to fetch course upload options");
+      }
       const data = await res.json();
       uploadCache.currentCourses = data.current_courses || [];
       uploadCache.pastCourses    = data.past_courses    || [];
@@ -207,7 +213,7 @@ export default function UploadBox() {
             <div className="bg-amber-950/30 border-b border-amber-900/50 px-4 py-2 flex items-start gap-2">
               <span className="material-symbols-outlined text-amber-400 mt-0.5" style={{ fontSize: 14 }}>warning</span>
               <p className="text-amber-300 text-xs leading-snug">
-                Preview only — annotations made here won't be uploaded. Save edits first then re-select.
+                Preview only - annotations made here won&apos;t be uploaded. Save edits first then re-select.
               </p>
             </div>
             <iframe src={previewUrl} title="PDF Preview" className="w-full" style={{ height: 400, border: "none" }} />

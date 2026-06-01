@@ -30,12 +30,20 @@ GOOGLE_API_KEY          = os.getenv("GOOGLE_API_KEY", "")
 GOOGLE_EMBEDDING_MODEL  = "gemini-embedding-001"
 
 
-### LLM ###
+### GROQ ###
 
-LLM_PROVIDER      = "google"
-LLM_MODEL         = os.getenv("LLM_MODEL", "gemini-2.0-flash")
-LLM_TEMPERATURE   = 0.1
-LLM_MAX_TOKENS    = 1024
+LLM_PROVIDER    = os.getenv("LLM_PROVIDER", "groq")
+_default_models = {
+    "groq":       "llama-3.3-70b-versatile",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "google":     "gemini-2.0-flash",
+}
+LLM_MODEL       = os.getenv("LLM_MODEL", _default_models.get(LLM_PROVIDER, "llama-3.3-70b-versatile"))
+LLM_TEMPERATURE = 0.1
+LLM_MAX_TOKENS  = 1024
+
+GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 
 
 ### CHUNKING ###

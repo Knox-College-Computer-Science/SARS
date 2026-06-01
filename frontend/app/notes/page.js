@@ -30,6 +30,13 @@ export default function NotesPage() {
 
   useEffect(() => { checkGoogleConnection(); }, []);
 
+  useEffect(() => {
+    if (!isConnected) return;
+    const courses = [...currentCourses, ...pastCourses];
+    if (courses.length === 0) return;
+    fetchNotesForCourses(courses);
+  }, [isConnected, currentCourses, pastCourses]);
+
   async function checkGoogleConnection() {
   setCheckingConnection(true);
   const controller = new AbortController();
@@ -49,8 +56,7 @@ export default function NotesPage() {
     const connected = Boolean(data.user && data.has_access_token);
     setIsConnected(connected);
     if (connected) {
-      if (notesCache.currentCourses === null) fetchCourses();
-      if (notesCache.notes              === null) fetchNotes();
+      fetchCourses();
       if (notesCache.classroomMaterials === null) fetchClassroomMaterials();
     }
   } catch (err) {
@@ -68,6 +74,7 @@ async function fetchCourses() {
   try {
     const res = await fetch("/api/classroom/courses/upload-options", {
       credentials: "include",
+      cache:       "no-store",
     });
 
     if (!res.ok) {
@@ -75,6 +82,9 @@ async function fetchCourses() {
       notesCache.pastCourses = [];
       setCurrentCourses([]);
       setPastCourses([]);
+      notesCache.notes = [];
+      setNotes([]);
+      setLoadingNotes(false);
       return;
     }
 
@@ -85,10 +95,17 @@ async function fetchCourses() {
 
     setCurrentCourses(notesCache.currentCourses);
     setPastCourses(notesCache.pastCourses);
+    fetchNotesForCourses([
+      ...notesCache.currentCourses,
+      ...notesCache.pastCourses,
+    ]);
   } catch (err) {
     console.error(err);
     setCurrentCourses([]);
     setPastCourses([]);
+    notesCache.notes = [];
+    setNotes([]);
+    setLoadingNotes(false);
   } finally {
     setLoadingCourses(false);
   }
@@ -97,7 +114,10 @@ async function fetchCourses() {
 async function fetchNotes() {
   setLoadingNotes(true);
   try {
-    const res  = await fetch("/api/notes", { credentials: "include" });
+    const res  = await fetch("/api/notes", {
+      credentials: "include",
+      cache: "no-store",
+    });
     const data = await res.json();
     const notes = Array.isArray(data) ? data : [];
     notesCache.notes = notes;
@@ -105,6 +125,43 @@ async function fetchNotes() {
   } catch (err) {
     console.error(err);
     setNotes([]);
+  } finally {
+    setLoadingNotes(false);
+  }
+}
+
+async function fetchNotesForCourses(courses) {
+  const courseIds = Array.from(new Set(
+    courses
+      .map((course) => course.id || course.school_course_id || course.courseId)
+      .filter(Boolean)
+      .map(String)
+  ));
+
+  if (courseIds.length === 0) return;
+
+  setLoadingNotes(true);
+
+  try {
+    const results = await Promise.all(
+      courseIds.map(async (courseId) => {
+        const res = await fetch(`/api/notes?course_id=${encodeURIComponent(courseId)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data)
+          ? data.map((note) => ({ ...note, course_id: note.course_id || courseId }))
+          : [];
+      })
+    );
+
+    const merged = results.flat();
+    notesCache.notes = merged;
+    setNotes(merged);
+  } catch (err) {
+    console.error(err);
   } finally {
     setLoadingNotes(false);
   }
@@ -130,23 +187,25 @@ async function fetchClassroomMaterials() {
     return (value || "").trim().toLowerCase();
   }
 
-  const allCourses = [...currentCourses, ...pastCourses];
-
   function noteBelongsToCourse(note, course) {
+    const noteCourseId = String(note.course_id || "");
+    const courseIds = [
+      course.id,
+      course.school_course_id,
+      course.courseId,
+    ].filter(Boolean).map(String);
+
+    if (noteCourseId && courseIds.includes(noteCourseId)) {
+      return true;
+    }
+
     const courseLabel = getCourseLabel(course);
 
     if (normalize(note.subject) === normalize(courseLabel)) {
       return true;
     }
 
-    const sameNameCourses = allCourses.filter(
-      (c) => normalize(c.name) === normalize(course.name)
-    );
-
-    if (
-      sameNameCourses.length === 1 &&
-      normalize(note.subject) === normalize(course.name)
-    ) {
+    if (normalize(note.subject) === normalize(course.name)) {
       return true;
     }
 

@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from fastapi import Depends
 from pathlib import Path
+import uuid
 
 from database import get_db
 from models import Note
@@ -14,6 +15,10 @@ router = APIRouter(tags=["Notes"])
 BASE_DIR   = Path(__file__).resolve().parent.parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+def _safe_filename(filename: str) -> str:
+    return Path(filename or "unknown").name.replace("\\", "_").replace("/", "_")
 
 
 @router.post("/upload")
@@ -34,7 +39,11 @@ async def upload_note(
 
     drive_file_id   = None
     drive_view_link = None
-    local_path      = None
+    safe_name       = _safe_filename(file.filename)
+    dest            = UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
+    with dest.open("wb") as buf:
+        buf.write(file_bytes)
+    local_path      = str(dest)
 
     if access_token:
         try:
@@ -54,12 +63,6 @@ async def upload_note(
             drive_view_link = drive_result["drive_view_link"]
         except Exception as e:
             print(f"[Drive] Upload failed, falling back to local: {e}")
-
-    if not drive_file_id:
-        dest = UPLOAD_DIR / file.filename
-        with dest.open("wb") as buf:
-            buf.write(file_bytes)
-        local_path = str(dest)
 
     note = Note(
         course_id       = course_id,
@@ -95,10 +98,12 @@ def get_notes(
     return [
         {
             "id":              n.id,
+            "course_id":       n.course_id,
             "filename":        n.filename,
             "subject":         n.subject,
             "drive_file_id":   n.drive_file_id,
             "drive_view_link": n.drive_view_link,
+            "local_path":      n.local_path,
             "uploaded_at":     n.uploaded_at.isoformat() if n.uploaded_at else None,
         }
         for n in notes
@@ -108,6 +113,10 @@ def get_notes(
 @router.get("/files/{filename}")
 def get_file(filename: str):
     filepath = UPLOAD_DIR / filename
+    if not filepath.exists():
+        matches = list(UPLOAD_DIR.glob(f"*_{_safe_filename(filename)}"))
+        if matches:
+            filepath = matches[0]
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(str(filepath))

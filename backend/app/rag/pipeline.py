@@ -29,8 +29,9 @@ def ingest(
         user_id: str,
         drive_file_id: Optional[str] = None,
         local_path: Optional[str] = None,
+        file_id: Optional[str] = None,
 ) -> IndexResult:
-    file_id = str(uuid.uuid4())
+    file_id = file_id or str(uuid.uuid4())
     is_slides = filename.lower().endswith(".pptx")
 
     result = index_file(
