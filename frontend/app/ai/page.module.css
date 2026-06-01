@@ -1,10 +1,10 @@
 .app {
   flex: 1;
-  min-height: 0;
-  height: 100%;
+  height: 100vh;
   display: flex;
   overflow: hidden;
 }
+
 .coursePanel {
   width: 220px;
   flex-shrink: 0;
@@ -59,11 +59,6 @@
   color: var(--color-primary);
 }
 
-.courseItemIcon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
 .courseItemText {
   overflow: hidden;
 }
@@ -85,10 +80,33 @@
   margin-top: 1px;
 }
 
+.pastCoursesToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--color-on-surface-variant);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  opacity: 0.45;
+  margin-top: 6px;
+  border-radius: 6px;
+  transition: opacity 150ms;
+}
+
+.pastCoursesToggle:hover {
+  opacity: 0.75;
+}
+
 .chatPanel {
   flex: 1;
   min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -97,11 +115,11 @@
 
 .chatHeader {
   padding: 12px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-outline-variant) 40%, transparent);
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-outline-variant) 15%, transparent);
 }
 
 .chatHeaderIcon {
@@ -130,13 +148,48 @@
   max-width: 760px;
   width: 100%;
   margin: 0 auto;
-  padding: 0 24px 300px;
+  padding: 0 24px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 40px;
   flex: 1;
-  min-height: 100%;
 }
+
+.emptyChat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  min-height: 300px;
+}
+
+.emptyChatAvatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emptyChatTitle {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-on-surface);
+  margin: 0;
+}
+
+.emptyChatSubtitle {
+  font-size: 14px;
+  color: var(--color-on-surface-variant);
+  opacity: 0.6;
+  margin: 0;
+}
+
 .userMessage {
   display: flex;
   justify-content: flex-end;
@@ -159,16 +212,12 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 18px 20px;
-  background: color-mix(in srgb, var(--color-surface-container) 40%, transparent);
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 20%, transparent);
 }
 
 .aiHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .aiAvatar {
@@ -183,29 +232,30 @@
 }
 
 .aiLabel {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--color-primary);
-  opacity: 0.7;
+  color: var(--color-on-surface-variant);
+  opacity: 0.6;
 }
 
 .aiText {
-  font-size: 15px;
-  line-height: 1.75;
-  padding-left: 0;
+  font-size: 16px;
+  line-height: 1.8;
   color: var(--color-on-surface);
+  padding-left: 36px;
 }
 
-.aiText p + p { margin-top: 10px; }
+.aiText p + p {
+  margin-top: 12px;
+}
 
 .citations {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding-left: 0;
-  margin-top: 4px;
+  padding-left: 36px;
 }
 
 .citationChip {
@@ -251,7 +301,7 @@
 .thinkingDots {
   display: flex;
   gap: 5px;
-  padding-left: 0;
+  padding-left: 36px;
 }
 
 .dot {
@@ -307,25 +357,24 @@
 
 .warningBanner {
   margin-bottom: 8px;
-  padding: 7px 14px;
-  background: color-mix(in srgb, var(--color-on-surface-variant) 5%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 20%, transparent);
-  color: var(--color-on-surface-variant);
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--color-secondary-container) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-secondary-container) 20%, transparent);
   border-radius: 8px;
   font-size: 12px;
-  opacity: 0.7;
+  color: var(--color-secondary-container);
 }
 
 .inputBox {
-  background: var(--color-surface-container-high);
-  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 40%, transparent);
-  border-radius: 18px;
+  background: var(--color-surface-container);
+  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 50%, transparent);
+  border-radius: 16px;
   overflow: hidden;
   transition: border-color 150ms;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
 }
+
 .inputBox:focus-within {
-  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 .textarea {
@@ -378,22 +427,11 @@
   flex-shrink: 0;
 }
 
-.sendBtn:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
+.sendBtn:hover:not(:disabled) { filter: brightness(1.1); }
+.sendBtn:active:not(:disabled) { transform: scale(0.95); }
+.sendBtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-.sendBtn:active:not(:disabled) {
-  transform: scale(0.95);
-}
-
-.sendBtn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.sendIcon {
-  font-size: 20px;
-}
+.sendIcon { font-size: 20px; }
 
 .filesPanel {
   width: 280px;
@@ -507,9 +545,7 @@
   cursor: default;
 }
 
-.fileRow:hover {
-  background: var(--color-surface-container);
-}
+.fileRow:hover { background: var(--color-surface-container); }
 
 .fileRowLeft {
   display: flex;
@@ -519,14 +555,9 @@
   flex: 1;
 }
 
-.fileIcon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
+.fileIcon { font-size: 18px; flex-shrink: 0; }
 
-.fileInfo {
-  overflow: hidden;
-}
+.fileInfo { overflow: hidden; }
 
 .fileName {
   font-size: 13px;
@@ -551,16 +582,12 @@
 }
 
 .statusDotReady    { background: var(--color-primary); }
-.statusDotIndexing { background: var(--color-secondary-container); animation: pulseDot 1.4s ease-in-out infinite; }
+.statusDotIndexing { background: #f59e0b; animation: pulseDot 1.4s ease-in-out infinite; }
 .statusDotFailed   { background: var(--color-error); }
 
-.statusText {
-  font-size: 10px;
-  font-weight: 500;
-}
-
+.statusText { font-size: 10px; font-weight: 500; }
 .statusTextReady    { color: var(--color-on-surface-variant); }
-.statusTextIndexing { color: var(--color-secondary-container); text-transform: uppercase; letter-spacing: 0.05em; }
+.statusTextIndexing { color: #f59e0b; text-transform: uppercase; letter-spacing: 0.05em; }
 .statusTextFailed   { color: var(--color-error); }
 
 .fileLabels {
@@ -586,9 +613,7 @@
   flex-shrink: 0;
 }
 
-.fileRow:hover .fileActions {
-  opacity: 1;
-}
+.fileRow:hover .fileActions { opacity: 1; }
 
 .fileActionBtn {
   background: none;
@@ -601,14 +626,10 @@
   transition: color 150ms;
 }
 
-.fileActionBtn:hover {
-  color: var(--color-primary);
-}
+.fileActionBtn:hover { color: var(--color-primary); }
+.fileActionBtnDanger:hover { color: var(--color-error); }
 
-.fileActionBtnDanger:hover {
-  color: var(--color-error);
-}
-
+/* ── Modal ── */
 .modalOverlay {
   position: fixed;
   inset: 0;
@@ -662,9 +683,7 @@
   transition: background 150ms;
 }
 
-.modalClose:hover {
-  background: var(--color-surface-container-high);
-}
+.modalClose:hover { background: var(--color-surface-container-high); }
 
 .modalTabs {
   display: flex;
@@ -688,18 +707,14 @@
   color: var(--color-on-surface-variant);
 }
 
-.modalTab:hover {
-  color: var(--color-on-surface);
-}
+.modalTab:hover { color: var(--color-on-surface); }
 
 .modalTabActive {
   border-bottom-color: var(--color-primary);
   color: var(--color-primary);
 }
 
-.modalBody {
-  padding: 20px;
-}
+.modalBody { padding: 20px; }
 
 .modalError {
   margin-bottom: 14px;
@@ -767,18 +782,9 @@
   transition: all 150ms;
 }
 
-.indexBtn:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.indexBtn:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.indexBtn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
+.indexBtn:hover:not(:disabled) { filter: brightness(1.08); }
+.indexBtn:active:not(:disabled) { transform: scale(0.98); }
+.indexBtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
 .notesList {
   display: flex;
@@ -797,9 +803,7 @@
   transition: background 150ms;
 }
 
-.noteRow:hover {
-  background: var(--color-surface-container);
-}
+.noteRow:hover { background: var(--color-surface-container); }
 
 .noteRowLeft {
   display: flex;
@@ -849,10 +853,7 @@
   background: color-mix(in srgb, var(--color-primary) 15%, transparent);
 }
 
-.noteIndexBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+.noteIndexBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .emptyNotes {
   text-align: center;
@@ -985,75 +986,4 @@
   cursor: pointer;
   color: var(--color-on-surface-variant);
   display: flex;
-}
-
-.emptyChat {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  text-align: center;
-  min-height: 300px;
-}
-
-.emptyChatAvatar {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.emptyChatTitle {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--color-on-surface);
-  letter-spacing: -0.01em;
-}
-.emptyChatSubtitle {
-  font-size: 14px;
-  color: var(--color-on-surface-variant);
-  opacity: 0.5;
-}
-
-.messages::-webkit-scrollbar {
-  width: 6px;
-}
-
-.messages::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.messages::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-on-surface-variant) 20%, transparent);
-  border-radius: 999px;
-}
-
-.messages::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--color-on-surface-variant) 35%, transparent);
-}
-
-.filesList::-webkit-scrollbar,
-.courseList::-webkit-scrollbar {
-  width: 6px;
-}
-
-.filesList::-webkit-scrollbar-track,
-.courseList::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.filesList::-webkit-scrollbar-thumb,
-.courseList::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-on-surface-variant) 20%, transparent);
-  border-radius: 999px;
-}
-
-.filesList::-webkit-scrollbar-thumb:hover,
-.courseList::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--color-on-surface-variant) 35%, transparent);
 }
