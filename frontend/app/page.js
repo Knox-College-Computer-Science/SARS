@@ -286,7 +286,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-on-surface">
+    <div className="flex-1 overflow-y-auto bg-background text-on-surface">
       <div className="p-6 grid grid-cols-12 gap-4">
 
         <div className="col-span-9 flex flex-col gap-5">

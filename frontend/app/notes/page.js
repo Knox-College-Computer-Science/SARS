@@ -184,7 +184,7 @@ async function fetchClassroomMaterials() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-6">
+    <div className="flex-1 overflow-y-auto bg-background p-6">
       <div>
         {/* Page header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
