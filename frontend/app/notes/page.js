@@ -177,7 +177,6 @@ async function fetchClassroomMaterials() {
       <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8 gap-6">
         <div className="text-center">
           <h1 className="font-display text-4xl font-bold text-on-surface tracking-tight">Notes</h1>
-          <p className="text-sm text-on-surface-variant mt-2">Connect Google Classroom to view your notes</p>
         </div>
         <ConnectGoogleClassroomCard message="Connect Google Classroom to view your uploaded notes according to your current classes." />
       </div>

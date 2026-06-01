@@ -275,34 +275,117 @@ def get_all_assignments_for_courses(access_token: str, courses: list) -> list:
             response_data = get_course_coursework(access_token, course_id)
             assignments = response_data.get("courseWork", [])
 
-            for assignment in assignments:
-                due_info = format_due_datetime(
-                    assignment.get("dueDate"),
-                    assignment.get("dueTime"),
-                )
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else None
 
-                all_assignments.append(
-                    {
-                        "courseId": course_id,
-                        "courseName": course_name,
-                        "id": assignment.get("id"),
-                        "title": assignment.get("title"),
-                        "description": assignment.get("description"),
-                        "workType": assignment.get("workType"),
-                        "state": assignment.get("state"),
-                        "creationTime": assignment.get("creationTime"),
-                        "updateTime": assignment.get("updateTime"),
-                        "dueDate": due_info["dueDate"],
-                        "dueTime": due_info["dueTime"],
-                        "alternateLink": assignment.get("alternateLink"),
-                    }
+            if status_code == 401:
+                raise
+
+            if status_code == 403:
+                print(
+                    f"Skipping course {course_name} ({course_id}) because coursework is forbidden. "
+                    "This may be a teaching/TA course."
                 )
+                continue
+
+            print(f"Failed for course {course_name} ({course_id}): {e}")
+            continue
+
         except Exception as e:
             print(f"Failed for course {course_name} ({course_id}): {e}")
             continue
 
+        submissions_by_coursework_id = {}
+
+        try:
+            submissions_by_coursework_id = get_course_student_submissions(
+                access_token,
+                course_id,
+            )
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else None
+
+            if status_code == 401:
+                raise
+
+            if status_code == 403:
+                print(
+                    f"Could not fetch submissions for {course_name} ({course_id}). "
+                    "This may be a teaching/TA course or permission issue."
+                )
+            else:
+                print(f"Failed to fetch submissions for {course_name} ({course_id}): {e}")
+
+        except Exception as e:
+            print(f"Failed to fetch submissions for {course_name} ({course_id}): {e}")
+
+        for assignment in assignments:
+            due_info = format_due_datetime(
+                assignment.get("dueDate"),
+                assignment.get("dueTime"),
+            )
+
+            submission = submissions_by_coursework_id.get(assignment.get("id"))
+
+            submission_state = submission.get("state") if submission else None
+            submitted = submission_state in ["TURNED_IN", "RETURNED"]
+
+            all_assignments.append(
+                {
+                    "courseId": course_id,
+                    "courseName": course_name,
+                    "id": assignment.get("id"),
+                    "title": assignment.get("title"),
+                    "description": assignment.get("description"),
+                    "workType": assignment.get("workType"),
+                    "state": assignment.get("state"),
+                    "submissionState": submission_state,
+                    "submitted": submitted,
+                    "creationTime": assignment.get("creationTime"),
+                    "updateTime": assignment.get("updateTime"),
+                    "dueDate": due_info["dueDate"],
+                    "dueTime": due_info["dueTime"],
+                    "alternateLink": assignment.get("alternateLink"),
+                }
+            )
+
     return all_assignments
 
+def get_course_student_submissions(access_token: str, course_id: str) -> dict:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    submissions_by_coursework_id = {}
+    page_token = None
+
+    while True:
+        params = {
+            "userId": "me",
+            "pageSize": 100,
+        }
+
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(
+            f"https://classroom.googleapis.com/v1/courses/{course_id}/courseWork/-/studentSubmissions",
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        for submission in data.get("studentSubmissions", []):
+            coursework_id = submission.get("courseWorkId")
+            if coursework_id:
+                submissions_by_coursework_id[coursework_id] = submission
+
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return submissions_by_coursework_id
 
 def get_course_materials(access_token: str, course_id: str) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
