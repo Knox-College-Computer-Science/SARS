@@ -1,42 +1,326 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import styles from "./page.module.css";
+import ConnectGoogleClassroomCard from "../components/ConnectGoogleClassroomCard";
 
-const API = "http://localhost:8000";
-
-const TABS = { CHAT: "chat", UPLOAD: "upload", FILES: "files" };
-
-const STATUS_COLORS = {
-  indexed:    "#57f287",
-  processing: "#fee75c",
-  error:      "#f04747",
-  duplicate:  "#949ba4",
+const aiCache = {
+  courses:     null,
+  isConnected: null,
 };
 
+const COURSE_ICONS = [
+  "memory", "account_tree", "bar_chart", "psychology",
+  "science", "calculate", "history_edu", "biotech",
+];
+
+const LABEL_COLORS = [
+  "var(--color-primary)",
+  "var(--color-secondary-container)",
+  "var(--color-tertiary)",
+  "var(--color-error)",
+];
+
+function getLabelColor(labelName) {
+  let hash = 0;
+  for (let i = 0; i < labelName.length; i++) {
+    hash = labelName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return LABEL_COLORS[Math.abs(hash) % LABEL_COLORS.length];
+}
+
+function CitationChip({ citation, indexedFiles, onUpdateLabels }) {
+  const [open, setOpen] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const ref = useRef(null);
+
+  const fileData = indexedFiles.find(
+    f => f.filename === citation.source || f.file_id === citation.file_id
+  );
+  const labels   = fileData?.labels || [];
+  const dotColor = getLabelColor(citation.source || "");
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  function handleAddLabel() {
+    const trimmed = newLabel.trim();
+    if (!trimmed || labels.includes(trimmed)) return;
+    onUpdateLabels(fileData?.file_id, [...labels, trimmed]);
+    setNewLabel("");
+  }
+
+  function handleRemoveLabel(label) {
+    onUpdateLabels(fileData?.file_id, labels.filter(l => l !== label));
+  }
+
+  const displayName = citation.source?.split("/").pop()?.replace(/\.[^.]+$/, "") || citation.source;
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <button className={styles.citationChip} onClick={() => setOpen(o => !o)}>
+        <span className={styles.citationDot} style={{ background: dotColor }} />
+        {displayName}
+        {citation.page && <span style={{ opacity: 0.5 }}>p.{citation.page}</span>}
+      </button>
+
+      {open && (
+        <div className={styles.labelOverlay}>
+          <div className={styles.labelOverlayHeader}>
+            <span className={styles.labelOverlayTitle}>Label this source</span>
+            <button className={styles.labelOverlayClose} onClick={() => setOpen(false)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+            </button>
+          </div>
+
+          {labels.length > 0 && (
+            <div className={styles.existingLabels}>
+              {labels.map((label, i) => (
+                <span key={i} className={styles.existingLabel}
+                  style={{ color: getLabelColor(label) }}>
+                  {label}
+                  <button className={styles.removeLabelBtn} onClick={() => handleRemoveLabel(label)}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>close</span>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.labelInput}>
+            <input
+              className={styles.labelInputField}
+              value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAddLabel()}
+              placeholder="Add a label…"
+            />
+            <button className={styles.labelAddBtn} onClick={handleAddLabel}>Add</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UploadModal({ courseId, courseName, onClose, onIndexed }) {
+  const [tab,          setTab         ] = useState("local");
+  const [uploadFile,   setUploadFile  ] = useState(null);
+  const [uploading,    setUploading   ] = useState(false);
+  const [error,        setError       ] = useState("");
+  const [notesFiles,   setNotesFiles  ] = useState([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [indexingId,   setIndexingId  ] = useState(null);
+
+  useEffect(() => {
+    function handleKey(e) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (tab !== "notes") return;
+    fetchNotesFiles();
+  }, [tab]);
+
+  async function fetchNotesFiles() {
+    setLoadingNotes(true);
+    try {
+      const res = await fetch(`/api/rag/notes-available?course_id=${courseId}`, {
+        credentials: "include",
+      });
+      if (res.ok) setNotesFiles(await res.json());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingNotes(false);
+    }
+  }
+
+  async function handleLocalUpload() {
+    if (!uploadFile) return;
+    setUploading(true);
+    setError("");
+    const form = new FormData();
+    form.append("file", uploadFile);
+    form.append("course_id", courseId);
+    try {
+      const res = await fetch("/api/rag/upload", {
+        method:      "POST",
+        credentials: "include",
+        body:        form,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        try {
+          const err = JSON.parse(text);
+          throw new Error(err.detail || "Upload failed");
+        } catch {
+          throw new Error(text || "Upload failed");
+        }
+      }
+      const data = await res.json();
+      if (data.status === "error") {
+        setError(data.error || "Indexing failed");
+        return;
+      }
+      if (data.status === "duplicate") {
+        setError("This file is already indexed for this course.");
+        return;
+      }
+      onIndexed();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleIndexFromNotes(noteId) {
+    setIndexingId(noteId);
+    setError("");
+    try {
+      const res = await fetch("/api/rag/index-from-notes", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ note_id: noteId, course_id: courseId }),
+      });
+      if (!res.ok) throw new Error("Failed to start indexing");
+      onIndexed();
+    } catch (err) {
+      setError(err.message);
+      setIndexingId(null);
+    }
+  }
+
+  return (
+    <div className={styles.modalOverlay} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className={styles.modal}>
+        <div className={styles.modalHeader}>
+          <div>
+            <div className={styles.modalTitle}>Add Files</div>
+            <div className={styles.modalSubtitle}>{courseName}</div>
+          </div>
+          <button className={styles.modalClose} onClick={onClose}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
+          </button>
+        </div>
+
+        <div className={styles.modalTabs}>
+          {[
+            { key: "local", label: "From Computer", icon: "upload_file" },
+            { key: "notes", label: "From Notes",    icon: "folder_open" },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`${styles.modalTab} ${tab === t.key ? styles.modalTabActive : ""}`}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.modalBody}>
+          {error && <div className={styles.modalError}>{error}</div>}
+
+          {tab === "local" && (
+            <>
+              <label
+                className={styles.dropzone}
+                onDrop={e => { e.preventDefault(); setUploadFile(e.dataTransfer.files[0]); }}
+                onDragOver={e => e.preventDefault()}
+              >
+                <span className={`material-symbols-outlined ${styles.dropzoneIcon}`}>cloud_upload</span>
+                <div className={styles.dropzoneText}>
+                  {uploadFile ? uploadFile.name : "Choose a file or drag and drop"}
+                </div>
+                <div className={styles.dropzoneHint}>PDF, DOCX, PPTX, TXT, MD</div>
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.pptx,.txt,.md"
+                  style={{ display: "none" }}
+                  onChange={e => setUploadFile(e.target.files[0])}
+                />
+              </label>
+              <button
+                className={styles.indexBtn}
+                onClick={handleLocalUpload}
+                disabled={!uploadFile || uploading}
+              >
+                {uploading ? "Indexing…" : "Index File"}
+              </button>
+            </>
+          )}
+
+          {tab === "notes" && (
+            <div className={styles.notesList}>
+              {loadingNotes ? (
+                [1, 2, 3].map(i => <div key={i} className={styles.skeletonRow} />)
+              ) : notesFiles.length === 0 ? (
+                <div className={styles.emptyNotes}>
+                  <span className={`material-symbols-outlined ${styles.emptyNotesIcon}`}>folder_off</span>
+                  <div className={styles.emptyNotesText}>No notes found for this course</div>
+                </div>
+              ) : notesFiles.map(note => (
+                <div key={note.note_id} className={styles.noteRow}>
+                  <div className={styles.noteRowLeft}>
+                    <span className={`material-symbols-outlined ${styles.noteRowIcon}`}>insert_drive_file</span>
+                    <span className={styles.noteRowName}>{note.filename}</span>
+                  </div>
+                  {note.already_indexed ? (
+                    <span className={styles.noteIndexedBadge}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span>
+                      Indexed
+                    </span>
+                  ) : (
+                    <button
+                      className={styles.noteIndexBtn}
+                      onClick={() => handleIndexFromNotes(note.note_id)}
+                      disabled={indexingId === note.note_id}
+                    >
+                      {indexingId === note.note_id ? "Starting…" : "Index"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AIPage() {
-  const [activeTab, setActiveTab]         = useState(TABS.CHAT);
-  const [courseId, setCourseId]           = useState("");
-  const [courses, setCourses]             = useState([]);
-  const [isConnected, setIsConnected]     = useState(false);
-  const [checkingConnection, setCheckingConnection] = useState(true);
-  const [messages, setMessages]           = useState([]);
-  const [input, setInput]                 = useState("");
-  const [loading, setLoading]             = useState(false);
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadFile, setUploadFile]       = useState(null);
-  const [useOCR, setUseOCR]              = useState(false);
-  const [indexedFiles, setIndexedFiles]   = useState([]);
-  const [error, setError]                 = useState("");
-  const [streamingText, setStreamingText] = useState("");
-  const bottomRef = useRef(null);
+  const [isConnected,        setIsConnected       ] = useState(aiCache.isConnected ?? false);
+  const [checkingConnection, setCheckingConnection] = useState(aiCache.courses === null);
+  const [courses,            setCourses           ] = useState(aiCache.courses ?? []);
+  const [courseId,           setCourseId          ] = useState("");
+  const [messages,           setMessages          ] = useState([]);
+  const [input,              setInput             ] = useState("");
+  const [loading,            setLoading           ] = useState(false);
+  const [streamingText,      setStreamingText     ] = useState("");
+  const [error,              setError             ] = useState("");
+  const [indexedFiles,       setIndexedFiles      ] = useState([]);
+  const [uploadModalOpen,    setUploadModalOpen   ] = useState(false);
+  const [filter,             setFilter            ] = useState("all");
+  const bottomRef   = useRef(null);
+  const textareaRef = useRef(null);
 
   const storageKey = `sars_chat_history_${courseId}`;
+  const course     = courses.find(c => c.id === courseId);
+  const courseName = course?.name || courseId;
 
-  // ── On mount: check Google connection ─────────────────────────
-  useEffect(() => {
-    checkGoogleConnection();
-  }, []);
+  useEffect(() => { checkGoogleConnection(); }, []);
 
-  // ── When course changes: load chat history + files ─────────────
   useEffect(() => {
     if (!courseId) return;
     const saved = localStorage.getItem(storageKey);
@@ -50,102 +334,127 @@ export default function AIPage() {
   }, [courseId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText]);
-
-  useEffect(() => {
     if (messages.length > 0)
       localStorage.setItem(storageKey, JSON.stringify(messages));
   }, [messages, courseId]);
 
-  // ── Poll for processing files ──────────────────────────────────
   useEffect(() => {
-    const hasProcessing = indexedFiles.some(f => f.status === "processing");
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingText]);
+
+  useEffect(() => {
+    const hasProcessing = indexedFiles.some(f => f.indexing_status === "processing");
     if (!hasProcessing) return;
     const timer = setInterval(fetchIndexedFiles, 3000);
     return () => clearInterval(timer);
   }, [indexedFiles, courseId]);
 
-  // ── Auth & course fetching ─────────────────────────────────────
-  const checkGoogleConnection = async () => {
+  async function checkGoogleConnection() {
     setCheckingConnection(true);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
+    const timeout    = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch(`${API}/auth/google/me`, {
+      const res  = await fetch("/api/auth/google/me", {
         credentials: "include",
-        signal: controller.signal,
+        signal:      controller.signal,
       });
-
-      if (!res.ok) {
-        setIsConnected(false);
-        return;
-      }
-
-      const data = await res.json();
+      if (!res.ok) { setIsConnected(false); return; }
+      const data      = await res.json();
       const connected = Boolean(data.user && data.has_access_token);
       setIsConnected(connected);
-
+      aiCache.isConnected = connected;
       if (connected) fetchCourses();
     } catch (err) {
-      if (err.name !== "AbortError") {
-        console.error("Connection check failed:", err);
-      }
+      if (err.name !== "AbortError") console.error(err);
       setIsConnected(false);
     } finally {
       clearTimeout(timeout);
       setCheckingConnection(false);
     }
-  };
-
-  const fetchCourses = async () => {
-    try {
-      const res = await fetch(`${API}/classroom/courses`, {
-        credentials: "include",
-      });
-
-      if (res.status === 401) {
-        setIsConnected(false);
-        setCourses([]);
-        return;
-      }
-
-      if (!res.ok) throw new Error("Failed to fetch courses");
-
-      const data = await res.json();
-      const fetched = data.courses || [];
-      setCourses(fetched);
-
-      if (fetched.length > 0) setCourseId(fetched[0].id);
-    } catch (err) {
-      console.error("Failed to fetch courses:", err);
-      setCourses([]);
-    }
-  };
-
-  // ── RAG helpers ────────────────────────────────────────────────
-  function defaultWelcome() {
-    return {
-      role: "assistant",
-      content: "Welcome to SARS AI. Upload course materials to get started, then ask questions about them.",
-    };
   }
 
-  const fetchIndexedFiles = async () => {
+  async function fetchCourses() {
+    try {
+      const res     = await fetch("/api/classroom/courses", { credentials: "include" });
+      if (res.status === 401) { setIsConnected(false); return; }
+      if (!res.ok) throw new Error("Failed to fetch courses");
+      const data    = await res.json();
+      const fetched = data.courses || [];
+      aiCache.courses = fetched;
+      setCourses(fetched);
+      if (fetched.length > 0) setCourseId(fetched[0].id);
+      } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function fetchIndexedFiles() {
     if (!courseId) return;
     try {
-      const res = await fetch(`${API}/rag/files/${courseId}`);
+      const res = await fetch(`/api/rag/files?course_id=${courseId}`, {
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         setIndexedFiles(data.files || []);
       }
-    } catch (e) {
-      console.error("Failed to fetch files:", e);
+    } catch (err) {
+      console.error(err);
     }
-  };
+  }
 
-  const deduplicateCitations = (citations) => {
+  async function handleDeleteFile(filename, fileId) {
+    if (!window.confirm(`Delete "${filename}" and all its indexed chunks?`)) return;
+    try {
+      const res = await fetch(`/api/rag/files/${fileId}?course_id=${courseId}`, {
+        method:      "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) {
+        fetchIndexedFiles();
+        setMessages(prev => [...prev, { role: "system", content: `Deleted ${filename}.` }]);
+      }
+    } catch (err) {
+      setError(`Failed to delete: ${err.message}`);
+    }
+  }
+
+  async function handleSendToNotes(fileId) {
+    try {
+      const res = await fetch("/api/rag/send-to-notes", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ file_id: fileId, course_id: courseId }),
+      });
+      if (res.ok) fetchIndexedFiles();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleUpdateLabels(fileId, labels) {
+    try {
+      await fetch(`/api/rag/files/${fileId}/labels`, {
+        method:      "PATCH",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ labels }),
+      });
+      fetchIndexedFiles();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function defaultWelcome() {
+    return {
+      role:    "assistant",
+      content: "Welcome to SARS AI. Upload course materials and ask questions about them.",
+    };
+  }
+
+  function deduplicateCitations(citations) {
     if (!citations?.length) return [];
     const seen = new Set();
     return citations.filter(c => {
@@ -154,32 +463,48 @@ export default function AIPage() {
       seen.add(key);
       return true;
     });
-  };
+  }
 
-  const handleStreamingChat = async (question) => {
-    setMessages(prev => [...prev, { role: "user", content: question }]);
+  async function handleSend() {
+    const q = input.trim();
+    if (!q || loading) return;
+    console.log("Chat payload:", { query: q, course_id: courseId, course_name: courseName });
+
+    setMessages(prev => [...prev, { role: "user", content: q }]);
     setInput("");
     setLoading(true);
     setStreamingText("");
     setError("");
 
+    if (textareaRef.current) textareaRef.current.style.height = "56px";
+
     try {
-      const url = new URL(`${API}/rag/chat/stream`);
-      url.searchParams.append("query", question);
-      url.searchParams.append("course_id", courseId);
+      const history = messages
+        .filter(m => m.role !== "system")
+        .map(m => ({ role: m.role, content: m.content }));
 
-      const response = await fetch(url.toString(), { credentials: "include" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const res = await fetch("/api/rag/chat", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({
+          query:       q,
+          course_id:   courseId,
+          course_name: courseName,
+          history,
+        }),
+      });
 
-      const reader = response.body.getReader();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const reader  = res.body.getReader();
       const decoder = new TextDecoder();
       let citations = [];
-      let fullText = "";
+      let fullText  = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         const chunk = decoder.decode(value, { stream: true });
         for (const line of chunk.split("\n\n")) {
           if (!line.startsWith("data: ")) continue;
@@ -191,9 +516,9 @@ export default function AIPage() {
               fullText += event.text || "";
               setStreamingText(fullText);
             } else if (event.type === "error")
-              throw new Error(event.text || "Unknown error");
+              throw new Error(event.error || "Unknown error");
           } catch (e) {
-            if (e.message !== "Unknown error") console.error("SSE parse error:", e);
+            if (e.message !== "Unknown error") console.error("SSE parse:", e);
             else throw e;
           }
         }
@@ -201,452 +526,364 @@ export default function AIPage() {
 
       setMessages(prev => [...prev, { role: "assistant", content: fullText, citations }]);
       setStreamingText("");
-    } catch (e) {
-      setError(e.message);
+    } catch (err) {
+      setError(err.message);
       setMessages(prev => [...prev, {
-        role: "assistant",
-        content: `Error: ${e.message}. Make sure Ollama is running.`,
+        role:    "assistant",
+        content: `Something went wrong: ${err.message}`,
       }]);
     } finally {
       setLoading(false);
     }
+  }
+
+  const FILE_ICONS = {
+    pdf:  { icon: "picture_as_pdf", color: "var(--color-error)"              },
+    docx: { icon: "article",        color: "var(--color-primary)"            },
+    pptx: { icon: "co_present",     color: "var(--color-tertiary)"           },
+    txt:  { icon: "text_snippet",   color: "var(--color-on-surface-variant)" },
+    md:   { icon: "text_snippet",   color: "var(--color-on-surface-variant)" },
   };
 
-  const handleSend = () => {
-    const q = input.trim();
-    if (!q || loading) return;
-    handleStreamingChat(q);
-  };
+  function getFileIcon(filename) {
+    const ext = filename?.split(".").pop()?.toLowerCase();
+    return FILE_ICONS[ext] || { icon: "insert_drive_file", color: "var(--color-on-surface-variant)" };
+  }
 
-  const handleRagUpload = async () => {
-    if (!uploadFile) return;
-    setUploadLoading(true);
-    setError("");
+  const notInNotes   = indexedFiles.filter(f => !f.drive_file_id);
+  const displayFiles = filter === "not_in_notes" ? notInNotes : indexedFiles;
 
-    const form = new FormData();
-    form.append("file", uploadFile);
-
-    try {
-      const url = new URL(`${API}/rag/upload`);
-      url.searchParams.append("course_id", courseId);
-      url.searchParams.append("use_ocr", useOCR ? "true" : "false");
-
-      const res = await fetch(url.toString(), {
-        method: "POST",
-        body: form,
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Upload failed");
-      }
-
-      const data = await res.json();
-      const status = data.file?.index_result?.status;
-
-      let msg = "";
-      if (status === "duplicate")
-        msg = `ℹ️ ${data.file?.file_name} is already indexed — no changes made.`;
-      else if (status === "success")
-        msg = `✓ Indexed ${data.file?.file_name} (${data.file?.index_result?.retrieval_chunks} chunks)`;
-      else if (status === "error")
-        msg = `✗ Failed to index ${data.file?.file_name}: ${data.file?.index_result?.error}`;
-      else
-        msg = `Processing ${data.file?.file_name}…`;
-
-      setMessages(prev => [...prev, { role: "system", content: msg }]);
-      setUploadFile(null);
-      fetchIndexedFiles();
-      setActiveTab(TABS.FILES);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setUploadLoading(false);
-    }
-  };
-
-  const handleDeleteFile = async (filename, fileId) => {
-    if (!window.confirm(`Delete "${filename}" and all its indexed chunks?`)) return;
-    try {
-      const res = await fetch(`${API}/rag/files/${courseId}/${fileId}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(prev => [...prev, {
-          role: "system",
-          content: `✓ Deleted ${filename} (${data.deleted_chunks} chunks removed)`,
-        }]);
-        fetchIndexedFiles();
-        setActiveTab(TABS.CHAT);
-      }
-    } catch (e) {
-      setError(`Failed to delete: ${e.message}`);
-    }
-  };
-
-  const courseName = courses.find(c => c.id === courseId)?.name || courseId;
-
-  // ── Loading state ──────────────────────────────────────────────
   if (checkingConnection) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26]">
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-          * { font-family: 'Inter', sans-serif; }
-          .pulse { animation: pulseSoft 1.4s ease-in-out infinite; }
-          @keyframes pulseSoft { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.85)} }
-        `}</style>
-        <div className="text-center">
-          <div className="flex gap-3 justify-center mb-5">
-            {[0, 0.15, 0.3].map((d, i) => (
-              <div key={i} className="w-3 h-3 bg-[#5865f2] rounded-full pulse"
-                style={{ animationDelay: `${d}s` }} />
-            ))}
-          </div>
-          <p className="text-[#949ba4] text-sm">Checking Google Classroom connection…</p>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-on-surface-variant">Checking connection…</p>
         </div>
       </div>
     );
   }
 
-  // ── Not connected gate ─────────────────────────────────────────
   if (!isConnected) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26] px-6">
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-          * { font-family: 'Inter', sans-serif; }
-          .btn-connect { background: #5865f2; transition: all .2s; }
-          .btn-connect:hover { background: #4752c4; transform: scale(1.03); }
-          .gate-card { animation: fadeUp .5s ease-out; }
-          @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-        `}</style>
-        <div className="gate-card max-w-md w-full">
-          <div className="bg-[#2c2f33] border border-[#40444b] rounded-2xl p-10 text-center shadow-2xl">
-            <div className="w-20 h-20 rounded-2xl bg-[#5865f2]/15 border border-[#5865f2]/30 mx-auto mb-6 flex items-center justify-center text-4xl">
-              🎓
-            </div>
-            <h2 className="text-2xl font-semibold text-[#f2f3f5] mb-3">
-              Connect Google Classroom
-            </h2>
-            <p className="text-[#949ba4] leading-relaxed mb-8">
-              Link your Google Classroom account to access your real courses and use the AI assistant with your actual course materials.
-            </p>
-            <a href="/connect"
-              className="btn-connect inline-block text-white px-8 py-3 rounded-full text-sm font-medium">
-              Go to Connect Page →
-            </a>
-          </div>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8 gap-6">
+        <div className="text-center">
+          <h1 className="font-display text-4xl font-bold text-on-surface tracking-tight">AI Assistant</h1>
+          <p className="text-sm text-on-surface-variant mt-2">Connect Google Classroom to get started</p>
         </div>
+        <ConnectGoogleClassroomCard message="Connect Google Classroom to access your courses and use the AI assistant with your actual course materials." />
       </div>
     );
   }
 
-  // ── No courses found edge case ────────────────────────────────
-  if (isConnected && courses.length === 0) {
+  if (courses.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26] px-6">
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-          * { font-family: 'Inter', sans-serif; }
-        `}</style>
-        <div className="max-w-md w-full bg-[#2c2f33] border border-[#40444b] rounded-2xl p-10 text-center">
-          <div className="text-5xl mb-4">📭</div>
-          <h2 className="text-xl font-semibold text-[#f2f3f5] mb-3">No Active Courses Found</h2>
-          <p className="text-[#949ba4] leading-relaxed mb-6">
-            No courses were found for the current term. Make sure your Google Classroom has active courses enrolled for this term.
-          </p>
-          <button onClick={checkGoogleConnection}
-            className="bg-[#5865f2] hover:bg-[#4752c4] text-white px-6 py-2 rounded-full text-sm font-medium transition">
-            Retry
-          </button>
-        </div>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8 gap-4">
+        <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 48, opacity: 0.3 }}>folder_off</span>
+        <h2 className="text-xl font-semibold text-on-surface">No courses found</h2>
+        <p className="text-sm text-on-surface-variant text-center max-w-sm">No active courses were found for this term in Google Classroom.</p>
+        <button
+          onClick={checkGoogleConnection}
+          className="px-6 py-2 bg-primary text-on-primary rounded-full text-sm font-semibold transition hover:brightness-110"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  // ── Main app ───────────────────────────────────────────────────
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-[#1e1f26] via-[#242933] to-[#1e1f26]">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-        * { font-family: 'Inter', sans-serif; }
-        .tab-active { color:#f8f9fa; border-bottom:2px solid #5865f2; }
-        .tab-inactive { color:#949ba4; transition:all .3s; }
-        .tab-inactive:hover { color:#dbdee1; }
-        .msg-enter { animation:slideIn .3s ease-out; }
-        @keyframes slideIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-        .pulse { animation:pulseSoft 2s ease-in-out infinite; }
-        @keyframes pulseSoft { 0%,100%{opacity:1} 50%{opacity:.5} }
-        .btn-primary { background:#5865f2; }
-        .btn-primary:hover { background:#4752c4; }
-        .toggle-switch { position:relative; display:inline-block; width:44px; height:22px; }
-        .toggle-switch input { opacity:0; width:0; height:0; }
-        .slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#40444b; border-radius:22px; transition:.3s; }
-        .slider:before { position:absolute; content:""; height:16px; width:16px; left:3px; bottom:3px; background:white; border-radius:50%; transition:.3s; }
-        input:checked + .slider { background:#5865f2; }
-        input:checked + .slider:before { transform:translateX(22px); }
-      `}</style>
+    <div className={styles.app}>
 
-      {/* ── Header ─────────────────────────────────────────────── */}
-      <div className="border-b border-[#2c2f33] bg-[#2c2f33]/30 backdrop-blur-sm sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[#5865f2] flex items-center justify-center">
-                <span className="text-lg">✨</span>
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold text-[#f2f3f5]">SARS AI</h1>
-                <p className="text-xs text-[#949ba4]">Course Assistant</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <select
-                value={courseId}
-                onChange={e => setCourseId(e.target.value)}
-                className="bg-[#40444b] border border-[#36393f] rounded px-3 py-2 text-sm text-[#dbdee1] focus:outline-none focus:border-[#5865f2] transition"
+      <div className={styles.coursePanel}>
+        <div className={styles.coursePanelHeader}>Collections</div>
+        <div className={styles.courseList}>
+          {courses.map((c, i) => (
+            <button
+              key={c.id || i}
+              onClick={() => setCourseId(c.id)}
+              className={`${styles.courseItem} ${c.id === courseId ? styles.courseItemActive : ""}`}
+            >
+              <span
+                className={`material-symbols-outlined ${styles.courseItemIcon}`}
+                style={{ fontVariationSettings: c.school_course_id === courseId ? '"FILL" 1' : '"FILL" 0' }}
               >
-                {courses.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <div className="text-right">
-                <p className="text-sm text-[#dbdee1]">{courseName}</p>
-                <p className="text-xs text-[#72767d]">
-                  {indexedFiles.length} file{indexedFiles.length !== 1 ? "s" : ""} indexed
-                </p>
+                {COURSE_ICONS[i % COURSE_ICONS.length]}
+              </span>
+              <div className={styles.courseItemText}>
+                <div className={styles.courseItemCode}>{c.section || c.course_code || c.name?.split(" ")[0]}</div>
+                <div className={styles.courseItemName}>{c.name}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={styles.chatPanel}>
+        <div className={styles.chatHeader}>
+          <span
+            className={`material-symbols-outlined ${styles.chatHeaderIcon}`}
+            style={{ fontVariationSettings: '"FILL" 1' }}
+          >
+            smart_toy
+          </span>
+          <span className={styles.chatHeaderTitle}>SARS AI</span>
+        </div>
+
+        <div className={styles.messages}>
+          <div className={styles.messagesInner}>
+            {messages.length === 1 && messages[0].role === "assistant" && (
+                <div className={styles.emptyChat}>
+                  <div className={styles.emptyChatAvatar}>
+                    <span className="material-symbols-outlined"
+                          style={{ fontSize: 32, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>
+                          smart_toy
+                    </span>
+                  </div>
+                  <h2 className={styles.emptyChatTitle}>SARS AI</h2>
+                  <p className={styles.emptyChatSubtitle}>Ask anything about your {courseName} materials</p>
+                </div>
+            )}
+            {messages.map((msg, i) => {
+              if (messages.length === 1 && msg.role === "assistant") return null;
+              if (msg.role === "system") return (
+                <div key={i} className={styles.systemMessage}>
+                  <div className={styles.systemBubble}>{msg.content}</div>
+                </div>
+              );
+              if (msg.role === "user") return (
+                <div key={i} className={styles.userMessage}>
+                  <div className={styles.userBubble}>{msg.content}</div>
+                </div>
+              );
+              return (
+                <div key={i} className={styles.aiBubble}>
+                  <div className={styles.aiHeader}>
+                    <div className={styles.aiAvatar}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>smart_toy</span>
+                    </div>
+                    <span className={styles.aiLabel}>SARS AI</span>
+                  </div>
+                  <div className={styles.aiText}>
+                    {msg.content.split("\n\n").map((para, j) => <p key={j}>{para}</p>)}
+                  </div>
+                  {msg.citations?.length > 0 && (
+                    <div className={styles.citations}>
+                      {msg.citations.map((c, j) => (
+                        <CitationChip
+                          key={j}
+                          citation={c}
+                          indexedFiles={indexedFiles}
+                          onUpdateLabels={handleUpdateLabels}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {loading && streamingText && (
+              <div className={styles.aiBubble}>
+                <div className={styles.aiHeader}>
+                  <div className={styles.aiAvatar}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>smart_toy</span>
+                  </div>
+                  <span className={styles.aiLabel}>SARS AI</span>
+                </div>
+                <div className={styles.aiText}>
+                  {streamingText}
+                  <span className={styles.cursor}>|</span>
+                </div>
+              </div>
+            )}
+
+            {loading && !streamingText && (
+              <div className={styles.aiBubble}>
+                <div className={styles.aiHeader}>
+                  <div className={styles.aiAvatar}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: "var(--color-primary)", fontVariationSettings: '"FILL" 1' }}>smart_toy</span>
+                  </div>
+                  <span className={styles.aiLabel}>SARS AI</span>
+                </div>
+                <div className={styles.thinkingDots}>
+                  {[0, 0.15, 0.3].map((d, i) => (
+                    <div key={i} className={styles.dot} style={{ animationDelay: `${d}s` }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+        </div>
+
+        <div className={styles.inputArea}>
+          <div className={styles.inputInner}>
+            {error && <div className={styles.errorBanner}>{error}</div>}
+            {indexedFiles.filter(f => f.indexing_status === "indexed").length === 0 && (
+              <div className={styles.warningBanner}>
+                No files indexed yet — upload materials using the panel on the right.
+              </div>
+            )}
+            <div className={styles.inputBox}>
+              <textarea
+                ref={textareaRef}
+                className={styles.textarea}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                onInput={e => {
+                  e.target.style.height = "56px";
+                  e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+                }}
+                placeholder={`Ask about ${courseName}…`}
+                disabled={loading}
+              />
+              <div className={styles.inputFooter}>
+                <span className={styles.inputDisclaimer}>AI may provide inaccurate info.</span>
+                <button
+                  className={styles.sendBtn}
+                  onClick={handleSend}
+                  disabled={!input.trim() || loading}
+                >
+                  <span className={`material-symbols-outlined ${styles.sendIcon}`}>arrow_upward</span>
+                </button>
               </div>
             </div>
-          </div>
-          <div className="flex gap-8 border-t border-[#2c2f33] pt-4">
-            {Object.values(TABS).map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)}
-                className={`pb-3 text-sm font-medium transition-all capitalize relative ${activeTab === tab ? "tab-active" : "tab-inactive"}`}>
-                {tab}
-                {tab === TABS.FILES && indexedFiles.some(f => f.status === "processing") && (
-                  <span className="ml-2 inline-block w-2 h-2 rounded-full bg-[#fee75c] pulse" />
-                )}
-              </button>
-            ))}
           </div>
         </div>
       </div>
 
-      {/* ── Main Content ────────────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden">
+      <div className={styles.filesPanel}>
+        <div className={styles.filesPanelHeader}>
+          <div className={styles.filesPanelTop}>
+            <span className={styles.filesPanelTitle}>Project Files</span>
+            <button className={styles.addBtn} onClick={() => setUploadModalOpen(true)}>
+              <span className="material-symbols-outlined" style={{ fontSize: 22 }}>add_circle</span>
+            </button>
+          </div>
+          <select
+            className={styles.filterSelect}
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+          >
+            <option value="all">All Files ({indexedFiles.length})</option>
+            <option value="not_in_notes">Not in Notes ({notInNotes.length})</option>
+          </select>
+        </div>
 
-        {/* CHAT TAB */}
-        {activeTab === TABS.CHAT && (
-          <div className="h-full flex flex-col">
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="max-w-4xl mx-auto space-y-4">
-                {messages.map((msg, i) => (
-                  <div key={i} className="msg-enter">
-                    {msg.role === "system" ? (
-                      <div className="inline-block bg-[#2c2f33] rounded-lg px-4 py-2 text-sm text-[#b5bac1] border border-[#40444b]">
-                        {msg.content}
-                      </div>
-                    ) : (
-                      <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`rounded-2xl px-5 py-3 max-w-2xl text-sm leading-relaxed ${
-                          msg.role === "user"
-                            ? "bg-[#5865f2] text-white rounded-br-none"
-                            : "bg-[#36393f] text-[#dbdee1] rounded-bl-none"
-                        }`}>
-                          <p className="whitespace-pre-wrap">{msg.content}</p>
-                          {msg.citations?.length > 0 && (
-                            <div className="mt-4 pt-3 border-t border-[#2c2f33] space-y-2">
-                              {msg.citations.map((c, idx) => (
-                                <div key={idx} className="text-xs opacity-80 flex gap-2">
-                                  <span className="font-semibold min-w-fit text-[#5865f2]">[{idx + 1}]</span>
-                                  <span>
-                                    {c.source} — {c.section}, p.{c.page}
-                                    <span className="opacity-60 ml-1">({c.element_type})</span>
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+        <div className={styles.filesList}>
+          {displayFiles.length === 0 ? (
+            <div className={styles.emptyFiles}>
+              <span className={`material-symbols-outlined ${styles.emptyFilesIcon}`}>folder_open</span>
+              <div className={styles.emptyFilesText}>
+                {filter === "not_in_notes" ? "All files are in Notes" : "No files indexed yet"}
+              </div>
+              {filter === "all" && (
+                <button className={styles.emptyFilesBtn} onClick={() => setUploadModalOpen(true)}>
+                  Upload your first file
+                </button>
+              )}
+            </div>
+          ) : displayFiles.map(f => {
+            const { icon, color } = getFileIcon(f.filename);
+            const isProcessing    = f.indexing_status === "processing";
+            return (
+              <div key={f.file_id} className={styles.fileRow}>
+                <div className={styles.fileRowLeft}>
+                  <span className={`material-symbols-outlined ${styles.fileIcon}`} style={{ color }}>
+                    {icon}
+                  </span>
+                  <div className={styles.fileInfo}>
+                    <div className={styles.fileName}>{f.filename}</div>
+                    <div className={styles.fileStatus}>
+                      {f.indexing_status === "indexed" && (
+                        <>
+                          <span className={`${styles.statusDot} ${styles.statusDotReady}`} />
+                          <span className={`${styles.statusText} ${styles.statusTextReady}`}>Ready</span>
+                        </>
+                      )}
+                      {f.indexing_status === "processing" && (
+                        <>
+                          <span className={`${styles.statusDot} ${styles.statusDotIndexing}`} />
+                          <span className={`${styles.statusText} ${styles.statusTextIndexing}`}>Indexing</span>
+                        </>
+                      )}
+                      {f.indexing_status === "failed" && (
+                        <>
+                          <span className={`${styles.statusDot} ${styles.statusDotFailed}`} />
+                          <span className={`${styles.statusText} ${styles.statusTextFailed}`}>Failed</span>
+                        </>
+                      )}
+                    </div>
+                    {f.labels?.length > 0 && (
+                      <div className={styles.fileLabels}>
+                        {f.labels.slice(0, 2).map((label, i) => (
+                          <span
+                            key={i}
+                            className={styles.fileLabel}
+                            style={{ color: getLabelColor(label) }}
+                          >
+                            {label}
+                          </span>
+                        ))}
+                        {f.labels.length > 2 && (
+                          <span className={styles.fileLabel}>+{f.labels.length - 2}</span>
+                        )}
                       </div>
                     )}
                   </div>
-                ))}
-
-                {loading && streamingText && (
-                  <div className="flex justify-start msg-enter">
-                    <div className="bg-[#36393f] text-[#dbdee1] rounded-2xl rounded-bl-none px-5 py-3 max-w-2xl text-sm leading-relaxed">
-                      <p className="whitespace-pre-wrap">{streamingText}</p>
-                      <span className="inline-block ml-1 pulse">▌</span>
-                    </div>
-                  </div>
-                )}
-
-                {loading && !streamingText && (
-                  <div className="flex justify-start">
-                    <div className="bg-[#36393f] rounded-2xl px-5 py-3">
-                      <div className="flex gap-2">
-                        {[0, 0.2, 0.4].map((d, i) => (
-                          <div key={i} className="w-2 h-2 bg-[#72767d] rounded-full pulse"
-                            style={{ animationDelay: `${d}s` }} />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div ref={bottomRef} />
-              </div>
-            </div>
-
-            <div className="border-t border-[#2c2f33] bg-[#2c2f33]/30 backdrop-blur-sm px-6 py-4">
-              {error && (
-                <div className="mb-3 bg-[#f04747]/15 border border-[#f04747]/30 rounded-lg px-4 py-2 text-sm text-[#f04747]">
-                  {error}
-                </div>
-              )}
-              {indexedFiles.length === 0 && (
-                <div className="mb-3 bg-[#fee75c]/10 border border-[#fee75c]/30 rounded-lg px-4 py-2 text-sm text-[#fee75c]">
-                  No files indexed yet.{" "}
-                  <button onClick={() => setActiveTab(TABS.UPLOAD)} className="underline">
-                    Upload a PDF
-                  </button>{" "}
-                  to start chatting.
-                </div>
-              )}
-              <div className="max-w-4xl mx-auto flex gap-3">
-                <input
-                  type="text" value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSend()}
-                  placeholder="Ask about your course materials…"
-                  className="flex-1 bg-[#40444b] border border-[#36393f] rounded-full px-6 py-3 text-sm text-[#dbdee1] placeholder-[#72767d] focus:outline-none focus:ring-2 focus:ring-[#5865f2]/50 transition"
-                  disabled={loading}
-                />
-                <button onClick={handleSend} disabled={!input.trim() || loading}
-                  className="btn-primary disabled:opacity-40 px-6 py-3 rounded-full text-sm font-medium text-white transition-all hover:scale-105 active:scale-95">
-                  Send
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* UPLOAD TAB */}
-        {activeTab === TABS.UPLOAD && (
-          <div className="h-full flex flex-col items-center justify-center px-6">
-            <div className="max-w-md w-full">
-              <div className="text-center mb-8">
-                <div className="w-16 h-16 rounded-full bg-[#5865f2] mx-auto mb-4 flex items-center justify-center">
-                  <span className="text-2xl">📄</span>
-                </div>
-                <h2 className="text-2xl font-semibold text-[#f2f3f5] mb-2">Upload Material</h2>
-                <p className="text-[#949ba4]">Add PDFs to {courseName}</p>
-              </div>
-
-              <div className="space-y-4">
-                <label className="block border-2 border-dashed border-[#40444b] rounded-2xl p-8 cursor-pointer hover:border-[#5865f2] hover:bg-[#5865f2]/5 transition group">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2 group-hover:scale-110 transition">📁</div>
-                    <p className="text-[#f2f3f5] font-medium mb-1">
-                      {uploadFile ? uploadFile.name : "Choose a PDF file"}
-                    </p>
-                    <p className="text-sm text-[#949ba4]">or drag and drop</p>
-                  </div>
-                  <input type="file" accept=".pdf" className="hidden"
-                    onChange={e => setUploadFile(e.target.files[0])} />
-                </label>
-
-                <div className="flex items-center justify-between bg-[#2c2f33] rounded-lg px-4 py-3 border border-[#40444b]">
-                  <div>
-                    <p className="text-sm text-[#dbdee1] font-medium">Enable OCR</p>
-                    <p className="text-xs text-[#72767d]">For scanned or handwritten PDFs (slower)</p>
-                  </div>
-                  <label className="toggle-switch">
-                    <input type="checkbox" checked={useOCR} onChange={e => setUseOCR(e.target.checked)} />
-                    <span className="slider" />
-                  </label>
                 </div>
 
-                <button onClick={handleRagUpload} disabled={!uploadFile || uploadLoading}
-                  className="w-full btn-primary disabled:opacity-40 py-3 rounded-full text-sm font-medium text-white transition-all hover:scale-105 active:scale-95">
-                  {uploadLoading ? "Indexing… (images may take longer)" : "Index PDF"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* FILES TAB */}
-        {activeTab === TABS.FILES && (
-          <div className="h-full overflow-y-auto px-6 py-6">
-            <div className="max-w-4xl mx-auto">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h2 className="text-2xl font-semibold text-[#f2f3f5]">Course Materials</h2>
-                  <p className="text-sm text-[#949ba4]">{courseName}</p>
-                </div>
-                <button onClick={() => setActiveTab(TABS.UPLOAD)}
-                  className="btn-primary px-4 py-2 rounded-lg text-sm font-medium text-white transition">
-                  + Upload PDF
-                </button>
-              </div>
-
-              {indexedFiles.length === 0 ? (
-                <div className="text-center py-16">
-                  <div className="text-5xl mb-4">📚</div>
-                  <p className="text-[#949ba4] text-lg">No files indexed yet</p>
-                  <p className="text-sm text-[#72767d] mt-2">
-                    Upload PDFs to start using the AI assistant
-                  </p>
-                  <button onClick={() => setActiveTab(TABS.UPLOAD)}
-                    className="mt-6 btn-primary px-6 py-3 rounded-full text-sm font-medium text-white transition">
-                    Upload your first PDF
+                <div className={styles.fileActions}>
+                  {!isProcessing && !f.drive_file_id && (
+                    <button
+                      className={styles.fileActionBtn}
+                      onClick={() => handleSendToNotes(f.file_id)}
+                      title="Add to Notes"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>note_add</span>
+                    </button>
+                  )}
+                  {f.drive_file_id && (
+                    <span
+                      className={styles.fileActionBtn}
+                      style={{ color: "var(--color-primary)", opacity: 0.4, cursor: "default" }}
+                      title="Already in Notes"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
+                    </span>
+                  )}
+                  <button
+                    className={`${styles.fileActionBtn} ${styles.fileActionBtnDanger}`}
+                    onClick={() => handleDeleteFile(f.filename, f.file_id)}
+                    title={isProcessing ? "Cancel" : "Delete"}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                      {isProcessing ? "close" : "delete"}
+                    </span>
                   </button>
                 </div>
-              ) : (
-                <div className="grid gap-3">
-                  {indexedFiles.map((f, idx) => (
-                    <div key={f.filename || idx}
-                      className="bg-[#2c2f33] border border-[#40444b] rounded-lg p-4 flex items-center justify-between hover:bg-[#36393f] hover:border-[#5865f2]/50 transition msg-enter"
-                      style={{ animationDelay: `${idx * 50}ms` }}>
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <span className="text-xl">
-                          {f.status === "processing" ? "⏳" :
-                           f.status === "error"      ? "❌" : "📄"}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[#f2f3f5] font-medium truncate">{f.filename}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-xs font-medium"
-                              style={{ color: STATUS_COLORS[f.status] || "#949ba4" }}>
-                              {f.status === "processing" ? "Indexing…" :
-                               f.status === "error"      ? "Failed" :
-                               f.status === "duplicate"  ? "Already indexed" : "Ready"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      {f.status !== "processing" && (
-                        <button
-                          onClick={() => handleDeleteFile(f.filename, f.file_id)}
-                          className="ml-4 px-4 py-2 rounded-lg text-[#f04747] hover:bg-[#f04747]/15 transition text-sm font-medium">
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {uploadModalOpen && (
+        <UploadModal
+          courseId={courseId}
+          courseName={courseName}
+          onClose={() => setUploadModalOpen(false)}
+          onIndexed={() => { fetchIndexedFiles(); setUploadModalOpen(false); }}
+        />
+      )}
     </div>
   );
 }

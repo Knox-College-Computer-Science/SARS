@@ -1,7 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-import socketio
+
+import os
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from fastapi.responses import JSONResponse
 
 from app.config import SESSION_SECRET
 from app.routes.auth import router as auth_router
@@ -12,9 +16,11 @@ from app.routes.conversations import router as conversations_router
 from app.routes.notes import router as notes_router
 from app.routes.rag import router as rag_router
 from app.routes.todos import router as todos_router
-from database import engine, Base, init_db
+from database import engine, Base, init_db, get_db
+
 import socketio
 from socket_manager import sio
+
 
 # Create all DB tables and seed demo data on startup
 Base.metadata.create_all(bind=engine)
@@ -50,11 +56,38 @@ app.include_router(todos_router)
 def root():
     return {"message": "SARS API running"}
 
-
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+async def health(
+    db: Session = Depends(get_db),
+    deep: bool = False,
+):
+    checks = {}
 
+    # Database
+    try:
+        db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+
+    # Gemini API
+    google_key = os.getenv("GOOGLE_API_KEY")
+    if not deep:
+        checks["gemini"] = "ok" if google_key else "error: GOOGLE_API_KEY not set"
+    else:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=google_key)
+            genai.get_model("models/gemini-1.5-flash")
+            checks["gemini"] = "ok"
+        except Exception as e:
+            checks["gemini"] = f"error: {e}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={"status": "ok" if all_ok else "degraded", "checks": checks}
+    )
 
 # Wrap FastAPI with socket.io — run with:
 # uvicorn app.main:socket_app --reload --port 8000

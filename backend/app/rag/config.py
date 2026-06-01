@@ -33,7 +33,7 @@ GOOGLE_EMBEDDING_MODEL  = "gemini-embedding-001"
 ### LLM ###
 
 LLM_PROVIDER      = "google"
-LLM_MODEL         = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+LLM_MODEL         = os.getenv("LLM_MODEL", "gemini-2.0-flash")
 LLM_TEMPERATURE   = 0.1
 LLM_MAX_TOKENS    = 1024
 
@@ -51,7 +51,6 @@ SLIDE_MERGE_THRESHOLD = 400
 VECTOR_SEARCH_TOP_K = 20
 BM25_SEARCH_TOP_K   = 20
 
-RERANK_MODEL     = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 RERANK_TOP_K     = 8
 RERANK_THRESHOLD = 0.3
 RERANKING_BATCH_SIZE = 32
@@ -102,7 +101,7 @@ EVAL_LOG_ENABLED = True
 
 ### FEATURE FLAGS ###
 
-MULTIQUERY_ENABLED      = True
+MULTIQUERY_ENABLED      = False # False for now for managing rates. If running local, can enable.
 CONTEXT_PACKING_ENABLED = True
 SIBLING_CONTEXT_ENABLED = True
 RERANKING_ENABLED       = True

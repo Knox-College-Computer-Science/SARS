@@ -178,3 +178,19 @@ class DirectMessageReaction(Base):
     )
 
     message = relationship("DirectMessage", back_populates="reactions")
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id              = Column(String, primary_key=True, default=generate_uuid)
+    course_id       = Column(String, ForeignKey("courses.id"), nullable=False, index=True)
+    user_id         = Column(String, ForeignKey("users.id"), nullable=False)
+    filename        = Column(String(255), nullable=False)
+    subject = Column(String(255), nullable=True)
+    drive_file_id   = Column(String(255), nullable=True)
+    drive_view_link = Column(String(500), nullable=True)
+    local_path      = Column(String(500), nullable=True)
+    uploaded_at     = Column(DateTime(timezone=True), server_default=func.now())
+
+    course = relationship("Course")
+    user   = relationship("User")
