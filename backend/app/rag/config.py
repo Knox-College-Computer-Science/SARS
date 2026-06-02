@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 ### PATHS ###
 
 RAG_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "RAG_Uploads"
@@ -13,7 +12,6 @@ RAG_UPLOADS_DIR.mkdir(exist_ok=True)
 PARSE_CACHE_DIR = Path(__file__).resolve().parent / "storage" / "parse_cache"
 PARSE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-
 ### EMBEDDING ###
 
 EMBEDDING_PROVIDER  = os.getenv("EMBEDDING_PROVIDER", "google")
@@ -21,21 +19,19 @@ EMBEDDING_MODEL     = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIMENSION = 768
 EMBEDDING_BATCH_SIZE = 100
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434") # Not used in the current iteration
 
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "")
-HUGGINGFACE_MODEL   = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "") # Fallback Option
+HUGGINGFACE_MODEL   = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B") # Fallback Option
 
 GOOGLE_API_KEY          = os.getenv("GOOGLE_API_KEY", "")
 GOOGLE_EMBEDDING_MODEL  = "gemini-embedding-001"
-
 
 ### GROQ ###
 
 LLM_PROVIDER    = os.getenv("LLM_PROVIDER", "groq")
 _default_models = {
     "groq":       "llama-3.3-70b-versatile",
-    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
     "google":     "gemini-2.0-flash",
 }
 LLM_MODEL       = os.getenv("LLM_MODEL", _default_models.get(LLM_PROVIDER, "llama-3.3-70b-versatile"))
@@ -43,8 +39,6 @@ LLM_TEMPERATURE = 0.1
 LLM_MAX_TOKENS  = 1024
 
 GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
-OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
-
 
 ### CHUNKING ###
 
@@ -109,7 +103,7 @@ EVAL_LOG_ENABLED = True
 
 ### FEATURE FLAGS ###
 
-MULTIQUERY_ENABLED      = False # False for now for managing rates. If running local, can enable.
+MULTIQUERY_ENABLED      = False # False due to rate limits. If running local, can enable.
 CONTEXT_PACKING_ENABLED = True
 SIBLING_CONTEXT_ENABLED = True
 RERANKING_ENABLED       = True
