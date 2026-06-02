@@ -94,6 +94,8 @@ async def _stream_openai_compatible(
     except httpx.HTTPStatusError as e:
         if "429" in str(e):
             yield f"Rate limit reached on {provider_name}. Please try again shortly."
+        elif "413" in str(e):
+            yield "The document context is too large to process in one request. Try asking a more specific question."
         else:
             logger.error(f"{provider_name} HTTP error: {e}", exc_info=True)
             yield f"Error from {provider_name}: {e}"

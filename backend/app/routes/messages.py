@@ -257,16 +257,6 @@ async def upload_channel_file(
         except Exception as e:
             print(f"[Drive] Channel file upload failed (non-fatal): {e}")
 
-    # Mirror record into the notes section DB
-    from app.routes.notes import _get_conn
-    notes_conn = _get_conn()
-    notes_conn.execute(
-        "INSERT INTO notes (filename, subject, uploaded_by, drive_file_id, drive_view_link) VALUES (?, ?, ?, ?, ?)",
-        (file.filename, subject, uploaded_by, drive_file_id, drive_view_link),
-    )
-    notes_conn.commit()
-    notes_conn.close()
-
     msg = ChannelMessage(
         channel_id=channel_id,
         sender_id=sender_id,

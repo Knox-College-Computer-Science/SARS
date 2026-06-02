@@ -297,7 +297,7 @@ class RAGRetrievalLog(Base):
     __tablename__ = "rag_retrieval_logs"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    course_id = Column(String, ForeignKey("courses.id"), nullable=False, index=True)
+    course_id = Column(String, nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     query = Column(Text, nullable=False)
     query_variants = _array_column()
