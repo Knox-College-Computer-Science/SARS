@@ -1,23 +1,36 @@
+# Core
 fastapi
 uvicorn[standard]
-psycopg2-binary
+starlette
+python-multipart>=0.0.9
+itsdangerous
 python-dotenv
+
+# Database
+sqlalchemy>=2.0
+psycopg2-binary
+pgvector
+
+# Real-time
+python-socketio>=5.11.0
+aiohttp>=3.9.0
+
+# Google integrations
+google-auth
 google-auth-oauthlib
 google-api-python-client
-google-auth
+google-genai
+
+# HTTP clients
 requests
-beautifulsoup4
-itsdangerous
-starlette
-sqlalchemy>=2.0
-python-socketio>=5.11.0
-python-multipart>=0.0.9
-aiohttp>=3.9.0
-# RAG pipeline
-chromadb
-rank-bm25
-unstructured[pdf]
-PyPDF2
-langchain-ollama
-langchain-core
 httpx
+
+# RAG pipeline
+rank-bm25
+docling
+
+# Utilities
+beautifulsoup4
+
+# Testing
+pytest
