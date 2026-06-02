@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from database import SessionLocal, get_db
-from models import Note
+from models import Note, Course
 from app.rag.pipeline import ingest, query, list_course_files, delete_course_file, get_file_status
 from app.rag.models import RAGFile
 
@@ -452,8 +452,12 @@ async def send_to_notes(
                 detail="This older RAG file has no saved original file. Re-upload it once, then Add to Notes will work.",
             )
 
+        course = db.query(Course).filter(Course.school_course_id == course_id).first()
+        if not course:
+            raise HTTPException(status_code=404, detail=f"Course {course_id} not found")
+
         note = Note(
-            course_id       = course_id,
+            course_id       = course.id,
             user_id         = user_id,
             filename        = rag_file.filename,
             drive_file_id   = drive_result["drive_file_id"] if drive_result else None,

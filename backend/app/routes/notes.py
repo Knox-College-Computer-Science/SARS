@@ -8,7 +8,7 @@ from pathlib import Path
 import uuid
 
 from database import get_db
-from models import Note
+from models import Note, Course
 
 router = APIRouter(tags=["Notes"])
 
@@ -64,8 +64,12 @@ async def upload_note(
         except Exception as e:
             print(f"[Drive] Upload failed, falling back to local: {e}")
 
+    course = db.query(Course).filter(Course.school_course_id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail=f"Course {course_id} not found")
+
     note = Note(
-        course_id       = course_id,
+        course_id       = course.id,
         user_id         = user_id,
         filename        = file.filename,
         subject=subject,

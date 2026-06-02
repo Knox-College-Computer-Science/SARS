@@ -133,10 +133,10 @@ def _search_pgvector(
                 chunk_id, course_id, user_id, file_id, parent_id,
                 chunk_index, element_type, page_number, section_heading,
                 source_filename, text, formatted_content,
-                1 - (embedding <=> :query_vec::vector) AS score
+                1 - (embedding <=> CAST(:query_vec AS vector)) AS score
             FROM retrieval_chunks
             WHERE course_id = :course_id
-            ORDER BY embedding <=> :query_vec::vector
+            ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :top_k
         """),
         {"query_vec": vector_str, "course_id": course_id, "top_k": top_k},
