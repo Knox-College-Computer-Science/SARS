@@ -65,10 +65,7 @@ Open `http://localhost:3000`.
 
 ## Deployment (Vercel + Render + Supabase)
 
-1. In Supabase SQL editor: `CREATE EXTENSION IF NOT EXISTS vector;`
-2. Set `DATABASE_URL` on Render to your Supabase connection string.
-3. Set all other `.env` variables on Render. Set `GOOGLE_REDIRECT_URI` to `<RENDER_URL>/auth/google/callback` and add that URI in Google Cloud Console.
-4. Tables are created automatically on first backend start.
+https://sars-git-ronak-ronak4170s-projects.vercel.app/connect
 
 ---
 
@@ -82,28 +79,3 @@ python -m pytest tests/ -v
 No external services are contacted. Tests use an in-memory SQLite database and mock all API calls (Google, Groq, Socket.IO).
 
 See `TESTING.md` for full details on test architecture, what each file covers, input partitioning, and the manual regression checklist.
-
----
-
-## Assumptions
-
-- Google login requires valid OAuth credentials and a matching redirect URI in Google Cloud Console.
-- The AI assistant requires a valid Groq key (LLM) and Google AI Studio key (embeddings). If either is missing, file indexing or chat will fail.
-- Local uploads are stored in `backend/uploads/`. In production, files are mirrored to Google Drive with local disk as fallback.
-- Course term detection uses the Knox College academic calendar. If unavailable, all active courses are treated as current-term.
-- Supabase requires the `pgvector` extension to be enabled before first backend start.
-- Demo seed data (test users and a sample course) is inserted automatically on first start if the database is empty.
-
----
-
-## Runtime Files (Do Not Commit)
-
-```
-backend/uploads/
-backend/RAG_Uploads/
-backend/app/rag/storage/parse_cache/
-backend/*.db
-frontend/.next/
-node_modules/
-.venv/
-```

@@ -13,17 +13,22 @@ on:
 jobs:
 
   backend:
-    name : Backend check
+    name: Backend check
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: [ "3.11", "3.12" ]
+
+    env:
+      GOOGLE_API_KEY: test-key
+      SESSION_SECRET: test-secret-key
+      DATABASE_URL: sqlite:///./nexus.db
 
     steps:
       - uses: actions/checkout@v4
 
-      - name : Python setup with ${{ matrix.python-version }}
+      - name: Python setup with ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -35,9 +40,9 @@ jobs:
           cd backend
           pip install -r requirements.txt
 
-      - name : Start backend server
+      - name: Start backend server
         run: |
-          cd backend 
+          cd backend
           uvicorn app.main:socket_app --host 0.0.0.0 --port 8000 &
           sleep 5
           curl --fail http://localhost:8000/health

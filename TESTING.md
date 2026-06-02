@@ -4,7 +4,7 @@ This guide explains how to run the SARS test suite, what the existing tests veri
 
 ## Overview
 
-SARS uses automated backend API tests written with `pytest`. The tests exercise FastAPI routes directly through FastAPI's `TestClient`, so a developer does not need to manually start the backend server before running the test suite.
+SARS~~ uses automated backend API tests written with `pytest`. The tests exercise FastAPI routes directly through FastAPI's `TestClient`, so a developer does not need to manually start the backend server before running the test suite.
 
 The current test suite focuses on deterministic backend behavior:
 
@@ -121,7 +121,6 @@ These tests verify that:
 - Unknown courses return `404`.
 - Users who are not enrolled in a course receive `403`.
 - Creating a channel succeeds for valid input.
-- Channel names are normalized, such as `Study Group` becoming `study-group`.
 - Duplicate channel names are rejected with `409`.
 - The members endpoint excludes the requesting user and includes classmates.
 
@@ -182,7 +181,6 @@ These tests verify that:
 - Uploading with a valid session succeeds.
 - Successful upload creates a database row.
 - A course with no notes returns an empty list.
-- Uploaded notes are returned by `/notes?course_id=...`.
 - Notes are filtered by course, so one course does not show another course's files.
 
 ### RAG Metadata Tests
@@ -199,9 +197,9 @@ They verify that:
 
 - `/rag/health` returns `ok`.
 - Listing RAG files requires authentication.
-- Seeded RAG files appear in `/rag/files`.
+- Seeded (Previouly created) RAG files appear in `/rag/files`.
 - Deleted RAG files are hidden from file lists.
-- File status returns statuses such as `processing`.
+- File status returns statuses such as `indexing`.
 - Unknown file status returns `404`.
 - Deleting a RAG file marks it deleted.
 - Deleted RAG files disappear from the visible list.
