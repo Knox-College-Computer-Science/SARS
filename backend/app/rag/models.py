@@ -268,7 +268,7 @@ class RetrievalChunk(Base):
     source_filename = Column(String(255), nullable=False)
     text = Column(Text, nullable=False)
     formatted_content = Column(Text, nullable=True)
-    embedding = _vector_column(768)
+    embedding = _vector_column(3072)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     file = relationship("RAGFile", back_populates="retrieval_chunks")
